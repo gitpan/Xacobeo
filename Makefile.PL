@@ -6,9 +6,9 @@ use 5.006;
 
 use inc::Module::Install;
 
-
-name           'Xacobeo';
-all_from       'lib/Xacobeo.pm';
+name           'Xacobeo',
+all_from       'bin/xacobeo';
+abstract       "XPath (XML Path Language) visualizer.";
 
 requires       'Pod::Usage';
 requires       'Getopt::Long';

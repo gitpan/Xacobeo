@@ -10,17 +10,34 @@ xacobeo file [xpath]
 
 =head1 DESCRIPTION
 
-This program provides a graphical user interface (GUI) that can be used for
-running XPath queries.
+This program provides a simple graphical user interface (GUI) for executing
+XPath queries and seeing their results.
 
-The program tries to provide all the elements that are needed in order to write,
-test and execute XPath queries. The program displays the DOM and the namespaces
-available. It also registers the namespaces automatically and displays each
-element with it's associated namespaces. All is performed with the idea of being
-able of running an XPath query as soon as the GUI is displayed.
+The GUI tries to provide all the elements that are needed in order to write,
+test and execute XPath queries without too many troubles. It displays the
+Document Object Model (DOM) and the namespaces used. The program registers the
+namespaces automatically and each element is displayed with it's associated
+namespaces. All is performed with the idea of being able of running an XPath
+query as soon as possible without having to fight with the document's namespaces
+and by seeing automatically under which namespace each element is.
 
-This program uses XML::LibXML (libxml2) for all XML manipulations and Gtk2 for
-the graphical interface.
+=head1 RATIONALE
+
+The main idea behind this application is to provide a simple way for building
+XPath queries that will be latter integrated in to a program or XSLT
+transformation paths. Therefore, this program goal is to load an XML document
+and to display it as an XML parser sees it. Thus each node element is prefixed
+with it's namespace.
+
+=head1 IMPLEMENTATION
+
+This program uses L<XML::LibXML> (libxml2) for all XML manipulations and L<Gtk2>
+for the graphical interface.
+
+=head1 LIMITATIONS
+
+For the moment, the program focuses only XPath and doesn't allow the XML
+document to be edited.
 
 =head1 AUTHORS
 
@@ -40,6 +57,6 @@ use strict;
 use warnings;
 use 5.006;
 
-our $VERSION = '0.01_01';
+our $VERSION = '0.01_02';
 
 1;
