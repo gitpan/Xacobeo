@@ -82,6 +82,7 @@ use Glib qw(TRUE FALSE);
 use Gtk2 qw(-init);
 use Gtk2::GladeXML;
 use Gtk2::SimpleList;
+use Gtk2::Pango;
 
 use Pod::Usage;
 use Getopt::Long qw(:config auto_help);
@@ -90,6 +91,7 @@ use Time::HiRes qw(time);
 use XML::LibXML;
 use File::Spec::Functions;
 use FindBin;
+use Carp;
 
 use Xacobeo;
 use Xacobeo::DomModel;
@@ -136,9 +138,17 @@ sub construct_gui {
 	my $self = shift;
 
 	my $folder = find_app_folder();
+	
+	# Load the GUI definition from the glade files
 	my $glade = Gtk2::GladeXML->new(catfile($folder, 'share', 'xacobeo', 'xacobeo.glade'));
 	$self->glade($glade);
+
+	# Set the application's icon
+	my $logo = Gtk2::Gdk::Pixbuf->new_from_file(catfile($folder, 'share', 'xacobeo', 'xacobeo.svg'));
+	$self->glade->get_widget('window')->set_icon($logo);
+	$self->glade->get_widget('about')->set_logo($logo);
 	
+
 	# Connect the signals to the callbacks
 	$glade->signal_autoconnect_from_package($self);
 	
@@ -152,6 +162,8 @@ sub construct_gui {
 	# See http://www.mail-archive.com/gtk-perl-list@gnome.org/msg03647.html	
 	# and http://gtk2-perl.sourceforge.net/doc/pod/Gtk2/TreeViewColumn.html#_tree_column_set_cel
 	$self->contruct_dom_tree_view();
+	
+	$self->prepare_textviews();
 	
 	# Create the list model for the Namespace view
 	$self->contruct_namespaces_view();
@@ -274,8 +286,8 @@ sub load_file {
 	my $glade = $self->glade;
 	
 	my $buffer = $glade->get_widget('xml-document')->get_buffer();
-#	$buffer->set_text($document->xml->toString());
-	add_xml_into_buffer($buffer, $document->xml);
+	$buffer->delete($buffer->get_start_iter, $buffer->get_end_iter);
+	render_xml_into_buffer($buffer, $document->xml);
 
 	# Populate the DOM view tree
 	my $treeview = $self->glade->get_widget('dom-tree-view');
@@ -299,59 +311,229 @@ sub load_file {
 	$glade->get_widget('xpath-entry')->set_sensitive(TRUE);
 }
 
-
-#
-# Adds the contents of the XML document to the text buffer. Ideally this 
-# function will tag the elements, this way it will be possible to jump to the
-# elements from the DomViewer.
-#
-sub add_xml_into_buffer {
-	my ($buffer, $node) = @_;
-
-	# Evil shortcut - This method is not implemented yet
-	if ($node->isa('XML::LibXML::Document')) {
-		$buffer->set_text($node->toString());
-		return;
-	}
-
-	# Add the current node if it's an 'Element'
-	# NOTE: the first time we could get a 'Document'
-	if ($node->isa('XML::LibXML::Element')) {
-		#my $uri = $node->namespaceURI();
-		#printf "%s\n", $node->localname();
-		
-		# Find where the opening tag is over <tag[>]<--
-		my $text = $node->toString();
-		$text =~ s/>.*$/>/s;
-
-		my $end = $buffer->get_end_iter;
-		$buffer->insert($end, $text);
-		
-		printf "\n\n%s\n%s\n\n\n", $node->nodePath, $text;
-#		ATTRIBUTE:
-#		foreach my $attribute ($node->attributes) {
-#		
-#			# Keep only 'Attributes'
-#			next ATTRIBUTE unless $attribute->isa('XML::LibXML::Attr');
-#			#printf "  %s %s\n", $attribute->getName(), $attribute->isId ? 'TRUE' : 'no id';
-#		}
-	}
-	elsif ($node->isa('XML::LibXML::Document')) {
-#		print "DOcument node\n";
-	}
-	
-	# Add the children
-	CHILD:
-	foreach my $child ($node->childNodes) {
-		
-		# Keep only 'Elements'
-		next CHILD unless $child->isa('XML::LibXML::Element');
-		
-		add_xml_into_buffer($buffer, $child);
-	}
-	
+sub val {
+	return defined $_[0] ? $_[0] : 'undef';
 }
 
+#
+# Displays an XML node in a Gtk2::TextBuffer. The XML will be marked in the
+# text buffer. If the buffer defines the proper tags then the text will
+# automatically have syntax highlighting.
+#
+#
+# TODO:
+# Ideally this add makrs to the elements, this way it will be possible to jump
+# to the elements from the DomViewer.
+#
+sub render_xml_into_buffer {
+	my ($buffer, $node) = @_;
+	croak "Must pass (Gtk2::TextBuffer, XML::LibXML::Node)" unless @_ == 2;
+	croak "First parameter $buffer isn't a Gtk2::TextBuffer" unless $buffer->isa('Gtk2::TextBuffer');
+	croak "Second parameter $node isn't a XML::LibXML::Node" unless isa_dom_node($node) or isa_dom_nodelist($node);
+
+	# The main document
+	if (isa_dom_document($node)) {
+		# In concept a document has a single child the root element. In reality a
+		# document is allowed to have a prolog (http://www.w3.org/TR/REC-xml/#NT-prolog).
+		# The prolog is available in the child nodes of the document. The last node
+		# being the root element
+		my @children = $node->childNodes;
+		my $count = @children;
+		foreach my $child (@children) {
+			render_xml_into_buffer($buffer, $child);
+			# Add some new lines between the elements of the prolog. Libxml removes
+			# the white spaces in the prolog.
+			buffer_add($buffer, syntax => "\n") if --$count;
+		}
+	}
+	
+	# A node list
+	elsif (isa_dom_nodelist($node)) {
+		my @children = $node->get_nodelist;
+		my $count = scalar @children;
+
+		# Formatting using to indicate which result is being analyzed
+		my $i = 0;
+		my $format = sprintf " %%%dd. ", length($count);
+
+		foreach my $child (@children) {
+			my $result = sprintf $format, ++$i;
+			buffer_add($buffer, result => $result);
+			
+			render_xml_into_buffer($buffer, $child);
+			buffer_add($buffer, syntax => "\n") if --$count;
+		}
+	}
+
+	# An element ex: <tag>...</tag>
+	elsif (isa_dom_element($node)) {
+		
+		# Start of the element
+		buffer_add($buffer, syntax => '<');
+		buffer_add($buffer, element => $node->localname());
+
+		# The element's attributes
+		foreach my $attribute ($node->attributes) {
+			buffer_add($buffer, syntax => ' ');
+			buffer_add($buffer, attribute_name => $attribute->getName());
+			buffer_add($buffer, syntax => '="');
+			
+			# Escape the quotes with entities
+			my $value = $attribute->value();
+			$value =~ s/"/&quot;/;
+			buffer_add($buffer, attribute_value => $value);
+			
+			buffer_add($buffer, syntax => '"');
+		}
+		
+		# Close the start of the element
+		if (! $node->hasChildNodes()) {
+			# Empty element, ex: <empty />
+			# FIXME only elements defined as empty in the DTD shoud be empty. The
+			#       others should be: <no-content></no-content>
+			buffer_add($buffer, syntax => ' />');
+			return;
+		}
+		buffer_add($buffer, syntax => '>');
+		
+
+		# Do the children
+		foreach my $child ($node->childNodes) {
+			render_xml_into_buffer($buffer, $child);
+		}
+
+
+		# Close the element		
+		buffer_add($buffer, syntax => '</');
+		buffer_add($buffer, element => $node->localname);
+		buffer_add($buffer, syntax => '>');
+	}
+
+	# A text node, plain text in the document
+	elsif (isa_dom_text($node)) {
+		buffer_add($buffer, text => $node->nodeValue);
+	}
+
+	# A comment ex: <!-- comment -->
+	elsif (isa_dom_comment($node)) {
+		buffer_add($buffer, comment => '<!--' . $node->nodeValue . '-->');
+	}
+
+	# A PI (processing instruction) ex: <?stuff ?>
+	elsif (isa_dom_pi($node)) {
+		buffer_add($buffer, syntax => '<?');
+		buffer_add($buffer, pi => $node->nodeName);
+		
+		# Add the data if there's one
+		if (my $data = $node->getData) {
+			$data =~ s/\s+$//;
+			buffer_add($buffer, syntax => ' ');
+			buffer_add($buffer, pi => $data);
+		}
+		
+		buffer_add($buffer, syntax => '?>');
+	}
+
+	# A DTD definition ex: <!DOCTYPE ...
+	elsif (isa_dom_dtd($node)) {
+		buffer_add($buffer, dtd => $node->toString);
+	}
+
+	else {
+		warn "=====node $node not implemented";
+	}
+}
+
+
+#
+# This widget prepares the text view widgets. It basically performs actions that
+# can be done through glade. For the moment this method registers some tags used
+# for syntax highlighting.
+#
+sub prepare_textviews {
+	my $self = shift;
+	
+	# Build the styles for the syntax highlighting
+	my $tag_table = Gtk2::TextTagTable->new();
+	
+	add_tag($tag_table, result =>
+		family     => 'Courier 10 Pitch',
+		background => '#EDE9E3',
+		foreground => 'black',
+		style      => 'italic',,
+		weight     => PANGO_WEIGHT_LIGHT
+	);
+	
+	add_tag($tag_table, attribute_name =>
+		foreground => 'red',
+	);
+
+	add_tag($tag_table, attribute_value =>
+		foreground => 'blue',
+	);
+	
+	add_tag($tag_table, comment =>
+		foreground => '#008000',
+		style      => 'italic',
+		weight     => PANGO_WEIGHT_BOLD,
+	);
+	
+	add_tag($tag_table, dtd =>
+		foreground => '#558CBA',
+		style      => 'italic',
+	);
+	
+	add_tag($tag_table, element =>
+		foreground => '#800080',
+		weight     => PANGO_WEIGHT_BOLD,
+	);
+	
+	add_tag($tag_table, pi =>
+		foreground => '#558CBA',
+		style      => 'italic',
+	);
+	
+	add_tag($tag_table, syntax =>
+		foreground => 'black',
+		weight     => PANGO_WEIGHT_BOLD,
+	);
+	
+	add_tag($tag_table, text =>
+		foreground => 'black',
+	);
+
+
+	# Register new text buffers with support syntaxt highlighting
+	foreach my $name qw(xml-document xpath-results) {
+		my $buffer = Gtk2::TextBuffer->new($tag_table);
+		my $textview = $self->glade->get_widget($name);
+		$textview->set_buffer($buffer);
+	}
+}
+
+
+
+sub add_tag {
+	my ($tag_table, $name, @properties) = @_;
+	my $tag = Gtk2::TextTag->new($name);
+	$tag->set(@properties);
+	$tag_table->add($tag);
+}
+
+
+#
+# Adds the given text at the end of the buffer.
+#
+sub buffer_add {
+	my ($buffer, $type, $string) = @_;
+
+	if ($buffer->get_tag_table->lookup($type)) {
+		$buffer->insert_with_tags_by_name($buffer->get_end_iter, $string, $type);
+	}
+	else {
+		$buffer->insert($buffer->get_end_iter, $string);
+	}
+}
 
 #
 # Called when the main window is closed
@@ -376,18 +558,18 @@ sub callback_run_xpath {
 	# Run the XPath expression
 	my $xpath = $glade->get_widget('xpath-entry')->get_text;
 	my $start = time;
-	my @nodes = $self->document->findnodes($xpath);
+	my $nodelist = $self->document->find_nodelist($xpath);
 	my $end = time;
 	
 	$self->display_statusbar_message(
-		sprintf "Found %d results in %0.3f s", scalar @nodes, $end - $start
+		sprintf "Found %d results in %0.3f s", $nodelist->size, $end - $start
 	);
 	
 	# Display the results
-	my $content = xpath_result_to_string(@nodes);
 	my $textview = $glade->get_widget('xpath-results');
 	my $buffer = $textview->get_buffer();
-	$buffer->set_text($content);
+	$buffer->delete($buffer->get_start_iter, $buffer->get_end_iter);
+	render_xml_into_buffer($buffer, $nodelist);
 	
 	# Show the results
 	$glade->get_widget('notebook')->set_current_page(0);
@@ -488,44 +670,6 @@ sub display_statusbar_message {
 }
 
 
-#
-# Returns the given XPath result as a string.
-#
-sub xpath_result_to_string {
-	my (@nodes) = @_;
-
-	my @strings = ();
-
-	foreach my $node (@nodes) {
-
-		my $string;
-
-		if ($node->isa('XML::LibXML::NodeList')) {
-			$string = xpath_result_to_string($node->get_nodelist);
-		}
-		elsif ($node->isa('XML::LibXML::Text')) {
-			$string = $node->nodeValue . "\n";
-		}
-		elsif ($node->isa('XML::LibXML::Literal')) {
-			$string = $node->value . "\n";
-		}
-		elsif ($node->isa('XML::LibXML::Boolean')){
-			$string = $node->to_literal . "\n";
-		}
-		elsif ($node->isa('XML::LibXML::Number')){
-			$string = $node->to_literal . "\n";
-		}
-		else {
-			$string = $node->toString . "\n";
-		}
-		
-		push @strings, $string;
-	}
-
-	return join '', @strings;
-}
-
-
 # Return the root folder of the application once installed. The 'root' folder is
 # the one where the installation is done, in other words the root folder
 # hierarchy is as follows:
@@ -548,4 +692,84 @@ sub xpath_result_to_string {
 #     `-- xacobeo
 sub find_app_folder {
 	return catdir($FindBin::Bin, '..');
+}
+
+
+sub isa_dom_document {
+	my ($node) = @_;
+	return defined $node ? $node->isa('XML::LibXML::Document') : 0;
+}
+
+
+sub isa_dom_element {
+	my ($node) = @_;
+	return defined $node ? $node->isa('XML::LibXML::Element') : 0;
+}
+
+
+sub isa_dom_attr {
+	my ($node) = @_;
+	return defined $node ? $node->isa('XML::LibXML::Attr') : 0;
+}
+
+
+sub isa_dom_nodelist {
+	my ($node) = @_;
+	return defined $node ? $node->isa('XML::LibXML::NodeList') : 0;
+}
+
+
+#
+# Return true if the node is a text as defined in the DOM. NOTE: XML::LibXML
+# decided that Comment node is alsto a Text node. This method doesn't consider a
+# Coment node as being a Text node.
+#
+sub isa_dom_text {
+	my ($node) = @_;
+	return unless defined $node;
+	return if isa_dom_comment($node);
+	return $node->isa('XML::LibXML::Text');
+}
+
+
+sub isa_dom_comment {
+	my ($node) = @_;
+	return unless defined $node;
+	return defined $node ? $node->isa('XML::LibXML::Comment') : 0;
+}
+
+
+sub isa_dom_literal {
+	my ($node) = @_;
+	return defined $node ? $node->isa('XML::LibXML::Literal') : 0;
+}
+
+
+sub isa_dom_boolean {
+	my ($node) = @_;
+	return defined $node ? $node->isa('XML::LibXML::Boolean') : 0;
+}
+
+
+sub isa_dom_number {
+	my ($node) = @_;
+	return defined $node ?  $node->isa('XML::LibXML::Number') : 0;
+}
+
+
+sub isa_dom_node {
+	my ($node) = @_;
+	return defined $node ?  $node->isa('XML::LibXML::Node') : 0;
+}
+
+
+sub isa_dom_pi {
+	my ($node) = @_;
+	return defined $node ?  $node->isa('XML::LibXML::PI') : 0;
+}
+
+
+sub isa_dom_dtd {
+	my ($node) = @_;
+	return defined $node ?  $node->isa('XML::LibXML::Dtd') : 0;
 }

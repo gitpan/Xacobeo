@@ -17,9 +17,32 @@ use strict;
 use File::Spec::Functions;
 
 
-sub process_share_files {
+sub ACTION_install {
 	my $self = shift;
-	my $blib = $self->blib;
+
+	# Make sure that share/ has an installation path
+	my $p = $self->{properties};
+	if (! exists $p->{install_path}{share}) {
+		my $script_dir = $self->install_destination('script');
+		my @dirs = File::Spec->splitdir($script_dir);
+		$dirs[-1] = 'share';
+		$p->{install_path}{share} = File::Spec->catdir(@dirs);
+	}
+
+	# Proceed normally
+	$self->SUPER::ACTION_install(@_);
+}
+
+
+sub ACTION_post_install {
+	my $self = shift;
+	print "Updating desktop database\n";
+	system('update-desktop-database');
+}
+
+
+sub ACTION_build {
+	my $self = shift;
 
 	# Copy the files in share/
 	for my $entry (@{ $self->rscan_dir('share') }) {
@@ -29,13 +52,16 @@ sub process_share_files {
 
 		$self->copy_if_modified(
 			from => $entry,
-			to   => catfile($blib, $entry) 
+			to   => catfile($self->blib, $entry) 
 		);
 	}
+
+	# Proceed normally
+	$self->SUPER::ACTION_build(@_);
 }
 
-});
 
+});
 
 
 my %requires = (
@@ -51,6 +77,7 @@ my %requires = (
 	'Class::Accessor::Fast' => 0,
 	'File::Spec::Functions' => 0,
 	'FindBin'               => 0,
+	'Carp'                  => 0,
 );
 
 
@@ -71,7 +98,5 @@ my $build = $class->new(
 	},
 );
 
-$build->add_build_element('share');
-$build->install_base_relpaths(share => 'share');
 
 $build->create_build_script();
