@@ -108,6 +108,16 @@ __PACKAGE__->mk_accessors(
 );
 
 
+# The entities defined in XML
+my %ENTITIES = qw(
+	<  &lt;
+	>  &gt;
+	&  &amp;
+	'  &apos;
+	"  &quot;
+);
+
+
 # Main entry point
 exit main();
 
@@ -311,14 +321,16 @@ sub load_file {
 	$glade->get_widget('xpath-entry')->set_sensitive(TRUE);
 }
 
-sub val {
-	return defined $_[0] ? $_[0] : 'undef';
-}
 
 #
 # Displays an XML node in a Gtk2::TextBuffer. The XML will be marked in the
 # text buffer. If the buffer defines the proper tags then the text will
 # automatically have syntax highlighting.
+#
+# Parameters:
+#
+#  $buffer:   an instance of Gtk2::TextBuffer.
+#  $node:     an instance of XML::LibXML::Node or XML::LibXML::NodeList.
 #
 #
 # TODO:
@@ -328,11 +340,25 @@ sub val {
 sub render_xml_into_buffer {
 	my ($buffer, $node) = @_;
 	croak "Must pass (Gtk2::TextBuffer, XML::LibXML::Node)" unless @_ == 2;
-	croak "First parameter $buffer isn't a Gtk2::TextBuffer" unless $buffer->isa('Gtk2::TextBuffer');
-	croak "Second parameter $node isn't a XML::LibXML::Node" unless isa_dom_node($node) or isa_dom_nodelist($node);
+	if (! $buffer->isa('Gtk2::TextBuffer')) {
+		croak "First parameter $buffer must be of type Gtk2::TextBuffer";
+	}
 
-	# The main document
+
+	# A Document
 	if (isa_dom_document($node)) {
+
+		# Create the XML declaration <?xml version="" encoding=""?>
+		my $fake = XML::LibXML->createDocument();
+		my $xml_declaration = $fake->createProcessingInstruction("xml");
+		$xml_declaration->setData(
+			version => $node->version,
+			encoding => $node->actualEncoding,
+		);
+		render_xml_into_buffer($buffer, $xml_declaration);
+		buffer_add($buffer, syntax => "\n");
+
+
 		# In concept a document has a single child the root element. In reality a
 		# document is allowed to have a prolog (http://www.w3.org/TR/REC-xml/#NT-prolog).
 		# The prolog is available in the child nodes of the document. The last node
@@ -347,7 +373,7 @@ sub render_xml_into_buffer {
 		}
 	}
 	
-	# A node list
+	# A NodeList
 	elsif (isa_dom_nodelist($node)) {
 		my @children = $node->get_nodelist;
 		my $count = scalar @children;
@@ -357,15 +383,16 @@ sub render_xml_into_buffer {
 		my $format = sprintf " %%%dd. ", length($count);
 
 		foreach my $child (@children) {
+			# Add the result count
 			my $result = sprintf $format, ++$i;
-			buffer_add($buffer, result => $result);
+			buffer_add($buffer, result_count => $result);
 			
 			render_xml_into_buffer($buffer, $child);
 			buffer_add($buffer, syntax => "\n") if --$count;
 		}
 	}
 
-	# An element ex: <tag>...</tag>
+	# An Element ex: <tag>...</tag>
 	elsif (isa_dom_element($node)) {
 		
 		# Start of the element
@@ -374,16 +401,7 @@ sub render_xml_into_buffer {
 
 		# The element's attributes
 		foreach my $attribute ($node->attributes) {
-			buffer_add($buffer, syntax => ' ');
-			buffer_add($buffer, attribute_name => $attribute->getName());
-			buffer_add($buffer, syntax => '="');
-			
-			# Escape the quotes with entities
-			my $value = $attribute->value();
-			$value =~ s/"/&quot;/;
-			buffer_add($buffer, attribute_value => $value);
-			
-			buffer_add($buffer, syntax => '"');
+			render_xml_into_buffer($buffer, $attribute);
 		}
 		
 		# Close the start of the element
@@ -409,12 +427,13 @@ sub render_xml_into_buffer {
 		buffer_add($buffer, syntax => '>');
 	}
 
-	# A text node, plain text in the document
+	# A Text node, plain text in the document
 	elsif (isa_dom_text($node)) {
-		buffer_add($buffer, text => $node->nodeValue);
+		my $text = escape_xml_text($node->nodeValue);
+		buffer_add($buffer, text => $text);
 	}
 
-	# A comment ex: <!-- comment -->
+	# A Comment ex: <!-- comment -->
 	elsif (isa_dom_comment($node)) {
 		buffer_add($buffer, comment => '<!--' . $node->nodeValue . '-->');
 	}
@@ -428,7 +447,7 @@ sub render_xml_into_buffer {
 		if (my $data = $node->getData) {
 			$data =~ s/\s+$//;
 			buffer_add($buffer, syntax => ' ');
-			buffer_add($buffer, pi => $data);
+			buffer_add($buffer, pi_data => $data);
 		}
 		
 		buffer_add($buffer, syntax => '?>');
@@ -438,9 +457,55 @@ sub render_xml_into_buffer {
 	elsif (isa_dom_dtd($node)) {
 		buffer_add($buffer, dtd => $node->toString);
 	}
+	
+	# An Attribute ex: <... var="value" ...>
+	elsif (isa_dom_attr($node)) {
+		buffer_add($buffer, syntax => ' ');
+		buffer_add($buffer, attribute_name => $node->getName());
+		buffer_add($buffer, syntax => '="');
+		
+		my $value = escape_xml_text($node->value());
+		buffer_add($buffer, attribute_value => $value);
+		
+		buffer_add($buffer, syntax => '"');
+	}
+
+	# A Boolean value ex: true() or false()
+	elsif (isa_dom_boolean($node)) {
+		buffer_add($buffer, boolean => $node->to_literal);
+	}
+
+	# A Number ex: 2 + 5
+	elsif (isa_dom_number($node)) {
+		buffer_add($buffer, number => $node->to_literal);
+	}
+
+	# A Literal (a single text string) ex: "hello"
+	elsif (isa_dom_literal($node)) {
+		buffer_add($buffer, literal => $node->to_literal);
+	}
+
+	# A CDATA section ex: <![CDATA[<greeting>Hello, world!</greeting>]]> 
+	elsif (isa_dom_cdata($node)) {
+		buffer_add($buffer, syntax => '<![CDATA[');
+		buffer_add($buffer, cdata => $node->nodeValue);
+		buffer_add($buffer, syntax => ']]> ');
+	}
+	
+	# A Namespace definition ex: xmlns:svg="http://www.w3.org/2000/svg"
+	elsif (isa_dom_namespace($node)) {
+		buffer_add($buffer, syntax => ' ');
+		buffer_add($buffer, namespace_name => $node->nodeName);
+		buffer_add($buffer, syntax => '="');
+		
+		my $uri = escape_xml_text($node->getData);
+		buffer_add($buffer, namespace_uri => $uri);
+		
+		buffer_add($buffer, syntax => '"');
+	}
 
 	else {
-		warn "=====node $node not implemented";
+		warn "=====node $node of type (", ref($node),") is not implemented";
 	}
 }
 
@@ -456,13 +521,22 @@ sub prepare_textviews {
 	# Build the styles for the syntax highlighting
 	my $tag_table = Gtk2::TextTagTable->new();
 	
-	add_tag($tag_table, result =>
+	add_tag($tag_table, result_count =>
 		family     => 'Courier 10 Pitch',
 		background => '#EDE9E3',
 		foreground => 'black',
 		style      => 'italic',,
 		weight     => PANGO_WEIGHT_LIGHT
 	);
+	
+	# Make the boolean and number look a like
+	foreach my $name qw(boolean number) {
+		add_tag($tag_table, $name =>
+			family     => 'Courier 10 Pitch',
+			foreground => 'black',
+			weight     => PANGO_WEIGHT_BOLD
+		);
+	}
 	
 	add_tag($tag_table, attribute_name =>
 		foreground => 'red',
@@ -475,7 +549,7 @@ sub prepare_textviews {
 	add_tag($tag_table, comment =>
 		foreground => '#008000',
 		style      => 'italic',
-		weight     => PANGO_WEIGHT_BOLD,
+		weight     => PANGO_WEIGHT_LIGHT,
 	);
 	
 	add_tag($tag_table, dtd =>
@@ -493,6 +567,11 @@ sub prepare_textviews {
 		style      => 'italic',
 	);
 	
+	add_tag($tag_table, pi_data =>
+		foreground => 'red',
+		style      => 'italic',
+	);
+	
 	add_tag($tag_table, syntax =>
 		foreground => 'black',
 		weight     => PANGO_WEIGHT_BOLD,
@@ -500,6 +579,28 @@ sub prepare_textviews {
 	
 	add_tag($tag_table, text =>
 		foreground => 'black',
+	);
+	
+	add_tag($tag_table, literal =>
+		foreground => 'black',
+	);
+	
+	add_tag($tag_table, cdata =>
+		foreground => '#008000',
+		style      => 'italic',
+		weight     => PANGO_WEIGHT_LIGHT,
+	);
+	
+	add_tag($tag_table, namespace_name =>
+		foreground => 'red',
+		style      => 'italic',
+		weight     => PANGO_WEIGHT_LIGHT,
+	);
+	
+	add_tag($tag_table, namespace_uri =>
+		foreground => 'blue',
+		style      => 'italic',
+		weight     => PANGO_WEIGHT_LIGHT,
 	);
 
 
@@ -512,7 +613,10 @@ sub prepare_textviews {
 }
 
 
-
+#
+# Creates a text tag (Gtk2::TextTag) with the given name and properties and adds
+# it to a tag table.
+#
 sub add_tag {
 	my ($tag_table, $name, @properties) = @_;
 	my $tag = Gtk2::TextTag->new($name);
@@ -526,13 +630,7 @@ sub add_tag {
 #
 sub buffer_add {
 	my ($buffer, $type, $string) = @_;
-
-	if ($buffer->get_tag_table->lookup($type)) {
-		$buffer->insert_with_tags_by_name($buffer->get_end_iter, $string, $type);
-	}
-	else {
-		$buffer->insert($buffer->get_end_iter, $string);
-	}
+	$buffer->insert_with_tags_by_name($buffer->get_end_iter, $string, $type);
 }
 
 #
@@ -558,18 +656,19 @@ sub callback_run_xpath {
 	# Run the XPath expression
 	my $xpath = $glade->get_widget('xpath-entry')->get_text;
 	my $start = time;
-	my $nodelist = $self->document->find_nodelist($xpath);
+	my $result = $self->document->find($xpath);
 	my $end = time;
 	
+	my $count = isa_dom_nodelist($result) ? $result->size : 1;
 	$self->display_statusbar_message(
-		sprintf "Found %d results in %0.3f s", $nodelist->size, $end - $start
+		sprintf "Found %d results in %0.3f s", $count, $end - $start
 	);
 	
 	# Display the results
 	my $textview = $glade->get_widget('xpath-results');
 	my $buffer = $textview->get_buffer();
 	$buffer->delete($buffer->get_start_iter, $buffer->get_end_iter);
-	render_xml_into_buffer($buffer, $nodelist);
+	render_xml_into_buffer($buffer, $result);
 	
 	# Show the results
 	$glade->get_widget('notebook')->set_current_page(0);
@@ -695,6 +794,28 @@ sub find_app_folder {
 }
 
 
+#
+# Escapes the text as if would be added to a Text node. This function escapes
+# only the entities <, > and &.
+#
+sub escape_xml_text {
+	my ($string) = @_;
+	$string =~ s/([<>&])/$ENTITIES{$1}/eg;
+	return $string;
+}
+
+
+#
+# Escapes the text as if would be added to an Attribute. This function escapes
+# the entities <, >, &, ' and ".
+#
+sub escape_xml_attribute {
+	my ($string) = @_;
+	$string =~ s/([<>&'"])/$ENTITIES{$1}/eg;
+	return $string;
+}
+
+
 sub isa_dom_document {
 	my ($node) = @_;
 	return defined $node ? $node->isa('XML::LibXML::Document') : 0;
@@ -720,14 +841,16 @@ sub isa_dom_nodelist {
 
 
 #
-# Return true if the node is a text as defined in the DOM. NOTE: XML::LibXML
-# decided that Comment node is alsto a Text node. This method doesn't consider a
-# Coment node as being a Text node.
+# Return true if the node is a text as defined in the DOM.
+#
+# NOTE: XML::LibXML decided that Comment and CDATA nodes are also a Text node.
+#       Despite XML::LibXML this method doesn't consider a Coment nor a CDATA
+#       node as being a Text node.
 #
 sub isa_dom_text {
 	my ($node) = @_;
 	return unless defined $node;
-	return if isa_dom_comment($node);
+	return if isa_dom_comment($node) or isa_dom_cdata($node);
 	return $node->isa('XML::LibXML::Text');
 }
 
@@ -753,23 +876,35 @@ sub isa_dom_boolean {
 
 sub isa_dom_number {
 	my ($node) = @_;
-	return defined $node ?  $node->isa('XML::LibXML::Number') : 0;
+	return defined $node ? $node->isa('XML::LibXML::Number') : 0;
 }
 
 
 sub isa_dom_node {
 	my ($node) = @_;
-	return defined $node ?  $node->isa('XML::LibXML::Node') : 0;
+	return defined $node ? $node->isa('XML::LibXML::Node') : 0;
 }
 
 
 sub isa_dom_pi {
 	my ($node) = @_;
-	return defined $node ?  $node->isa('XML::LibXML::PI') : 0;
+	return defined $node ? $node->isa('XML::LibXML::PI') : 0;
 }
 
 
 sub isa_dom_dtd {
 	my ($node) = @_;
-	return defined $node ?  $node->isa('XML::LibXML::Dtd') : 0;
+	return defined $node ? $node->isa('XML::LibXML::Dtd') : 0;
+}
+
+
+sub isa_dom_cdata {
+	my ($node) = @_;
+	return defined $node ? $node->isa('XML::LibXML::CDATASection') : 0;
+}
+
+
+sub isa_dom_namespace {
+	my ($node) = @_;
+	return defined $node ? $node->isa('XML::LibXML::Namespace') : 0;
 }
