@@ -1,6 +1,6 @@
 =head1 NAME
 
-Xacobeo::Document - XML document and it's related information
+Xacobeo::Document - An XML document and it's related information.
 
 =head1 SYNOPSIS
 
@@ -18,8 +18,8 @@ Xacobeo::Document - XML document and it's related information
 
 =head1 DESCRIPTION
 
-This package wraps an XML document with it's corresponding meta information (
-namespaces, source, etc).
+This package wraps an XML document with it's corresponding meta information
+(namespaces, source, etc).
 
 =head1 METHODS
 
@@ -33,9 +33,11 @@ use strict;
 use warnings;
 
 use XML::LibXML;
-
 use Data::Dumper;
 use Carp;
+
+use Xacobeo::Utils qw(:dom);
+
 
 use base qw(Class::Accessor::Fast);
 __PACKAGE__->mk_accessors(
@@ -51,7 +53,7 @@ __PACKAGE__->mk_accessors(
 
 Creates a new instance.
 
-Paramters:
+Parameters:
 
 	$source: the source of the XML document, this can be a file name.
 
@@ -70,41 +72,13 @@ sub new {
 }
 
 
-=head2 findnodes
-
-Runs the given XPath query on the document. The resutls are returned as a list.
-In scalar context the number of nodes are returned.
-
-Paramters:
-
-	$xpath: a valid XPath expression.
-
-=cut
-
-sub findnodes {
-	my $self = shift;
-	my ($xpath) = @_;
-	
-	my @nodes = ();
-	eval {
-		@nodes = $self->xpath->findnodes($xpath, $self->xml);
-	};
-	if (my $error = $@) {
-#		warn "XPath '$xpath' failed: $error";
-		return;
-	}
-	
-	return wantarray ? @nodes : scalar @nodes;
-}
-
-
 =head2 find
 
 Runs the given XPath query on the document and returns the results. The results
 could be a node list or a single value like a boolean, a number or a scalar if
 an expression is passed.
 
-Paramters:
+Parameters:
 
 	$xpath: a valid XPath expression.
 
@@ -132,7 +106,7 @@ Validates the syntax of the given XPath query. The syntax is validated within a
 context that has the same namespaces as the ones defined in the current XML
 document.
 
-Paramters:
+Parameters:
 
 	$xpath: a valid XPath expression.
 
@@ -159,6 +133,30 @@ sub validate {
 }
 
 
+=head2 get_prefixed_name
+
+Returns the node name by prefixing it with our prefixes in the case where
+namespaces are used.
+
+
+=cut
+sub get_prefixed_name {
+	my $self = shift;
+	my ($node) = @_;
+
+	my $name = $node->localname;
+	my $uri = $node->namespaceURI();
+
+	# Check if the node uses a namespace if so return the name with our prefix
+	if (defined $uri and my $namespace = $self->{namespaces}{$uri}) {
+		return "$namespace:$name";
+	}
+
+	return $name;
+}
+
+
+
 #
 # Get/Set the namespaces.
 #
@@ -172,7 +170,7 @@ sub namespaces {
 
 
 #
-# Loads the XML document. This method will also find the namespaces used by the
+# Loads the XML document. This method will also find the namespaces used in the
 # document.
 #
 sub _load_document {
@@ -184,7 +182,6 @@ sub _load_document {
 	
 	# Parse the document
 	my $parser = _construct_xml_parser();
-
 	my $xml = $parser->parse_file($source);
 	$self->xml($xml);
 	
@@ -215,57 +212,41 @@ sub _construct_xml_parser {
 #
 # Finds every namespace declared in the document.
 #
-sub _fetch_namespaces {
-	my ($node, $collected) = @_;
-
-	foreach my $child ($node->childNodes) {
-		
-		# Only elements are allowed to declare namespaces
-		next unless $child->isa('XML::LibXML::Element');
-		
-		foreach my $namespace ($child->getNamespaces) {
-			my $uri = $namespace->getData;
-			$collected->{$uri} ||= $namespace->getLocalName;
-		}
-		
-		_fetch_namespaces($child, $collected);
-	}
-}
-
-
+# Each prefix is warrantied to be unique. The function will assign the first
+# prefix seen for each namespace.
 #
-# Finds every namespace declared in the document.
-#
-# Each prefix is warrantied to be unique.
-# The function will assign the first prefix seen for each namespace.
-#
-# The prefixes are returned in an hash ref of type $prefix => $uri.
+# The prefixes are returned in an hash ref of type ($uri => $prefix).
 #
 sub _get_all_namespaces {
 	my ($node) = @_;
-#FIXME the document test/beers.xml uses an empty namespace, this code has problems with it
+
 	# Find the namespaces ($uri -> $prefix)
 	my %namespaces = ();
-	_fetch_namespaces($node, \%namespaces);
+	foreach my $namespace ($node->findnodes('.//namespace::*')) {
+		my $uri = $namespace->getData;
+		$namespaces{$uri} ||= $namespace->getLocalName;
+	}
 	
 	# Reverse the namespaces ($prefix -> $uri) and make sure that the prefixes
 	# don't clash with each other.
-	my $cleanned = {};
+	my $cleaned = {};
+	my $namespaces = {};
 	my $index = 0;
 	while (my ($uri, $prefix) = each %namespaces) {
 
 		# Make sure that the prefixes are unique
-		if (! defined $prefix or exists $cleanned->{$prefix}) {
+		if (! defined $prefix or exists $cleaned->{$prefix}) {
 			# Assign a new prefix until unique
 			do {
 				$prefix = 'default' . ($index ? $index : '');
 				++$index;
-			} while (exists $cleanned->{$prefix});
+			} while (exists $cleaned->{$prefix});
 		}
-		$cleanned->{$prefix} = $uri;
+		$cleaned->{$prefix} = $uri;
+		$namespaces->{$uri} = $prefix;
 	}
 
-	return $cleanned;
+	return $namespaces;
 }
 
 
@@ -279,7 +260,7 @@ sub _create_xpath_context {
 	my $context = XML::LibXML::XPathContext->new();
 
 	# Add the namespaces to the XPath context
-	while (my ($prefix, $uri) = each %{ $self->namespaces }) {
+	while (my ($uri, $prefix) = each %{ $self->namespaces }) {
 		$context->registerNs($prefix, $uri);
 	}
 	
@@ -289,3 +270,18 @@ sub _create_xpath_context {
 
 # A true value
 1;
+
+=head1 AUTHORS
+
+Emmanuel Rodriguez E<lt>potyl@cpan.orgE<gt>.
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (C) 2008 by Emmanuel Rodriguez.
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself, either Perl version 5.8.8 or,
+at your option, any later version of Perl 5 you may have available.
+
+=cut
+
