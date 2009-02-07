@@ -1,8 +1,13 @@
 Revision history for Xacobeo.
 
 
+0.06_02 Sat Feb  7 11:57:57 CET 2009
+	- Issue 19: Add a version number to the about dialog.
+	- Issue 25: Internationalize the application.
+
+
 0.06_01 Sun Jan 18 20:21:11 CET 2009
-	-  The XML document is displayed in a Gtk2::SourceView (has line numbers).
+	- Issue 21: XML display has no line numbers.
 
 
 0.05 Mon Jan  5 19:13:00 CET 2009
