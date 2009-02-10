@@ -41,6 +41,7 @@ use Xacobeo::Document;
 use Xacobeo::Utils qw(:xml :dom);
 use Xacobeo::I18n;
 use Xacobeo::Timer;
+use Xacobeo::Error;
 use Xacobeo::XS qw(
 	xacobeo_populate_gtk_text_buffer
 	xacobeo_populate_gtk_tree_store
@@ -201,7 +202,10 @@ sub display_xml_node {
 
 
 	# A NodeList
-	if (isa_dom_nodelist($node)) {
+	if (ref($node) eq 'Xacobeo::Error') {
+		buffer_add($buffer, error => $node->message);
+	}
+	elsif (isa_dom_nodelist($node)) {
 		my @children = $node->get_nodelist;
 		my $count = scalar @children;
 
@@ -518,6 +522,10 @@ sub populate_tag_table {
 		weight     => PANGO_WEIGHT_BOLD,
 	);
 	
+	add_tag($tag_table, error =>
+		foreground => 'red',
+	);
+	
 	return $tag_table;
 }
 
@@ -568,14 +576,25 @@ sub callback_run_xpath {
 	# Run the XPath expression
 	my $xpath = $glade->get_widget('xpath-entry')->get_text;
 	my $timer = Xacobeo::Timer->start();
-	my $result = $self->document->find($xpath);
+	my $result;
+	eval {
+		$result = $self->document->find($xpath);
+	};
+	my $error = $@;
 	$timer->stop();
 	
-	my $count = isa_dom_nodelist($result) ? $result->size : 1;
-	$self->display_statusbar_message(
-		sprintf "Found %d results in %0.3f s", $count, $timer->elapsed
-	);
-	
+	if ($error) {
+		$result = Xacobeo::Error->new(xpath => $error);
+		$self->display_statusbar_message(__("XPath query issued an error"));
+	}
+	else {
+		my $count = isa_dom_nodelist($result) ? $result->size : 1;
+		my $format = __n("Found %d result in %0.3fs", "Found %d results in %0.3fs", $count);
+		$self->display_statusbar_message(
+			sprintf $format, $count, $timer->elapsed
+		);
+	}
+
 	# Display the results
 	$self->display_results($result);
 }
@@ -787,14 +806,13 @@ sub display_statusbar_message {
 sub glade_custom_handler {
 	my ($glade, $function, $name, $str1, $str2, $int1, $int2, $data) = @_;
 	my $self = $data;
-	print "Called $name->$function\n";
 	
 	my $widget;
 	if ($self->can($function)) {
 		$widget = $self->$function();
 	}
 	else {
-		my $message = "Missing method $function for creating widget $name";
+		my $message = __x("Can't create widget {name} because method {function} is missing", function => $function, name => $name);
 		warn $message;
 		$widget = Gtk2::Label->new($message);
 	}
@@ -834,6 +852,7 @@ sub create_xpath_results_view {
 	my $tag_table = populate_tag_table(Gtk2::TextTagTable->new());
 	my $buffer = Gtk2::TextBuffer->new($tag_table);
 	my $widget = Gtk2::TextView->new_with_buffer($buffer);
+	$widget->set_editable(FALSE);
 	
 	return $widget;
 }
