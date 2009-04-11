@@ -337,7 +337,8 @@ The XML file to load.
 sub load_file { 
 	# Arguments
 	my $self = shift;
-	my ($file) = @_;
+	my ($file, $type) = @_;
+	$type ||= 'xml';
 	
 	my $timer = Xacobeo::Timer->start();
 	
@@ -345,7 +346,7 @@ sub load_file {
 	my $t_load = Xacobeo::Timer->start(__('Load document'));
 	my $document;
 	eval {
-		$document = Xacobeo::Document->new($file);
+		$document = Xacobeo::Document->new($file, $type);
 	};
 	if (my $error = $@) {
 		my $message = __x("Can't read {file}: {error}", file => $file, error => $error);
@@ -384,11 +385,11 @@ sub populate_widgets {
 	$glade->get_widget('window')->set_title("$APP_NAME - $file");
 	
 	my $document = $self->document;
-	my ($xml, $namespaces) = $document ? ($document->xml, $document->namespaces) : (undef, {});
+	my ($documentNode, $namespaces) = $document ? ($document->documentNode, $document->namespaces) : (undef, {});
 
 	# Update the text widget
 	my $t_syntax = Xacobeo::Timer->start(__('Syntax Highlight'));
-	$self->display_xml_node('xml-document', $xml);
+	$self->display_xml_node('xml-document', $documentNode);
 	undef $t_syntax;
 	
 	# Clear the previous results
@@ -396,7 +397,7 @@ sub populate_widgets {
 
 	# Populate the DOM view tree
 	my $t_dom = Xacobeo::Timer->start(__('DOM Tree'));
-	$self->populate_treeview($xml);
+	$self->populate_treeview($documentNode);
 	undef $t_dom;
 	
 	

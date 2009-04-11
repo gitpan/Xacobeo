@@ -25,9 +25,17 @@ my %requires = (
 	'DynaLoader'            => 0,
 	'Data::Dumper'          => 0,
 	'Gtk2::SourceView'      => 0,
-	'Locale::TextDomain'       => 0,
+	'Locale::TextDomain'    => 0,
 );
 
+my %configure_requires = (
+	'ExtUtils::Depends'     => 0,
+	'ExtUtils::PkgConfig'   => 0,
+	'ExtUtils::ParseXS'     => 0,
+	'File::Spec::Functions' => 0,
+	'File::Path'            => 0,
+	'Gtk2'                  => 0,
+);
 
 my $build = inc::MyBuilder->new(
 	module_name       => 'Xacobeo',
@@ -38,23 +46,32 @@ my $build = inc::MyBuilder->new(
 	# Installation files
 	script_file => [ catfile('bin', 'xacobeo') ],
 
-
 	# Dependencies
 	requires => \%requires,
 	
-	configure_requires => {
-		'ExtUtils::Depends'     => 0,
-		'ExtUtils::PkgConfig'   => 0,
-		'ExtUtils::ParseXS'     => 0,
-		'File::Spec::Functions' => 0,
-		'File::Path'            => 0,
-	},
+	configure_requires => \%configure_requires,
 	
 	build_requires => {
-		'Test::More'  => '0',
-		'File::Slurp' => '0',
+		'Test::More'      => 0,
+		'File::Slurp'     => 0,
+		'Test::Exception' => 0,
+		%configure_requires,
 	},
+	
+	meta_merge => {
+		resources => {
+			homepage   => 'http://code.google.com/p/xacobeo/',
+			bugtracker => 'http://code.google.com/p/xacobeo/issues/list',
+			repository => 'http://code.google.com/p/xacobeo/source/browse/',
+		},
+	},
+
+	add_to_cleanup => [
+		catfile ('lib', 'Xacobeo', 'XS.xs'),
+		catfile ('lib', 'Xacobeo', 'libxml2-perl.typemap'),
+	],
 );
 
 
 $build->create_build_script();
+

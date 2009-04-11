@@ -3,7 +3,8 @@
 use strict;
 use warnings;
 
-use Test::More tests => 33;
+use Test::More tests => 53;
+use Test::Exception;
 use Data::Dumper;
 use Carp;
 
@@ -20,13 +21,14 @@ exit main();
 
 
 sub main {
-	
 	test_without_namespaces();
 	
 	test_namespaces1();
 	test_namespaces2();
 	test_namespaces3();
-	
+	test_namespaces4();
+	test_namespaces5();
+
 	test_empty_document();
 	test_empty_pi_document();
 	
@@ -35,7 +37,7 @@ sub main {
 
 
 sub test_without_namespaces {
-	my $document = Xacobeo::Document->new("$FOLDER/xorg.xml");
+	my $document = Xacobeo::Document->new("$FOLDER/xorg.xml", 'xml');
 	isa_ok($document, 'Xacobeo::Document');
 	
 	is_deeply(
@@ -57,10 +59,10 @@ sub test_without_namespaces {
 
 	
 	# Test that an invalid xpath expression throws an error
-	test_die(
-		sub {$document->find('//x/')},
-		qr/^Invalid expression/
-	);
+	throws_ok
+		{$document->find('//x/')}
+		qr/^(XPath error : )?Invalid expression/,
+		q(throws 'invalid expression');
 
 
 	# Find a existing node set
@@ -69,23 +71,23 @@ sub test_without_namespaces {
 	
 
 	# Fails because the namespace doesn't exist
-	test_die(
-		sub {$document->find('/x:html//x:a[@href]')},
-		qr/^Undefined namespace prefix\nxmlXPathCompiledEval: evaluation failed/
-	);
+	throws_ok
+		{$document->find('/x:html//x:a[@href]')}
+		qr/^(?:Undefined namespace prefix\n| error : )xmlXPathCompiledEval: evaluation failed/,
+		q(throws 'evaluation failed');
 	
 	# Fails because the syntax is invalid
-	test_die(
-		sub {$document->find('/html//a[@href')},
-		qr/^Invalid predicate/
-	);
+	throws_ok
+		{$document->find('/html//a[@href')}
+		qr/^(?:XPath error : )?Invalid predicate/,
+		q(throws 'Invalid predicate');
 
 	
 	# Fails because the function aaa() is not defined
-	test_die(
-		sub {$document->find('aaa(1)')},
-		qr/^xmlXPathCompOpEval: function aaa not found/
-	);
+	throws_ok
+		{$document->find('aaa(1)')}
+		qr/^(?:xmlXPathCompOpEval: function aaa not found|XPath error : Unregistered function)/,
+		q(throws 'Unregistered function/function not found');
 
 	
 	# This is fine
@@ -96,7 +98,7 @@ sub test_without_namespaces {
 
 
 sub test_namespaces1 {
-	my $document = Xacobeo::Document->new("$FOLDER/SVG.svg");
+	my $document = Xacobeo::Document->new("$FOLDER/SVG.svg", 'xml');
 	isa_ok($document, 'Xacobeo::Document');
 	
 	is_deeply(
@@ -156,14 +158,13 @@ sub test_namespaces1 {
 
 
 sub test_namespaces2 {
-	my $document = Xacobeo::Document->new("$FOLDER/beers.xml");
+	my $document = Xacobeo::Document->new("$FOLDER/beers.xml", 'xml');
 	isa_ok($document, 'Xacobeo::Document');
 
 	is_deeply(
 		$document->namespaces(),
 		{
-			'' => 'default',
-			'http://www.w3.org/1999/xhtml' => 'default1',
+			'http://www.w3.org/1999/xhtml' => 'default',
 			@XML_NS,
 		},
 		'Beers namespaces'
@@ -172,7 +173,7 @@ sub test_namespaces2 {
 	my $got;
 	
 	# Find the table header
-	$got = $document->find('//default1:th/default1:td[count(.//node()) = 1]/text()');
+	$got = $document->find('//default:th/default:td[count(.//node()) = 1]/text()');
 	is_deeply(
 		[ map { $_->data } $got->get_nodelist ],
 		[ qw(Name Origin Description) ],
@@ -180,14 +181,14 @@ sub test_namespaces2 {
 	);
 
 
-	# Try to find all nodes in the default namespace (there are none)
+	# Try to find all nodes in the default namespace
 	$got = $document->find('//default:*');
-	is($got->size, 0, "Beers had no elements under the default namespace");
+	is($got->size, 9, "Got 9 in the default namespace");
 }
 
 
 sub test_namespaces3 {
-	my $document = Xacobeo::Document->new("$FOLDER/stocks.xml");
+	my $document = Xacobeo::Document->new("$FOLDER/stocks.xml", 'xml');
 	isa_ok($document, 'Xacobeo::Document');
 
 	is_deeply(
@@ -199,14 +200,97 @@ sub test_namespaces3 {
 			'urn:schemas-microsoft-com:office:spreadsheet' => 'ss',
 			@XML_NS,
 		},
-		'Stocks namespaces'
+		"Extract 'stocks.xml' namespaces"
+	);
+}
+
+
+sub test_namespaces4 {
+	my $document = Xacobeo::Document->new("$FOLDER/sample.xml", 'xml');
+	isa_ok($document, 'Xacobeo::Document');
+
+	is_deeply(
+		$document->namespaces(),
+		{
+			'urn:x-is-simple' => 'x',
+			'urn:m&n' => 'default',
+			@XML_NS,
+		},
+		"Extract 'sample.xml' namespaces"
+	);
+	
+	my $got;
+	
+	# Find some stuff
+	$got = $document->find('//*');
+	is($got->size, 11, "Find all elements");
+	
+	$got = $document->find('//default:*');
+	is($got->size, 1, "Find all elements in the default namespace");
+	is($got->[0]->nodeName, 'no-content');
+	
+	$got = $document->find('//x:*');
+	is($got->size, 1, "Find all elements in the namespace 'x'");
+	is($got->[0]->nodeName, 'x:div');
+}
+
+
+sub test_namespaces5 {
+	my $document = Xacobeo::Document->new("$FOLDER/namespaces.xml", 'xml');
+	isa_ok($document, 'Xacobeo::Document');
+
+	is_deeply(
+		$document->namespaces(),
+		{
+			'http://www.example.org/a' => 'a',
+			'http://www.example.org/b' => 'b',
+			'http://www.example.org/c' => 'c',
+			'http://www.example.org/x' => 'default',
+			'http://www.example.org/y' => 'default1',
+			@XML_NS,
+		},
+		"Extract 'namespaces.xml' namespaces"
+	);
+	
+	my $got;
+	
+	# Find some stuff
+	$got = $document->find('//*');
+	is($got->size, 17, "Find all elements");
+	
+	$got = $document->find('//a:*');
+	is($got->size, 5, "Find all elements in the namespace 'a'");
+	is_deeply(
+		[ map { $_->nodeName }  $got->get_nodelist ],
+		[ qw(a:p a:span c:div g4 a:p) ],
+		"Match element names for namespace 'a'"
+	);
+	
+	$got = $document->find('//b:*');
+	is($got->size, 1, "Find all elements in the namespace 'b'");
+	is($got->[0]->nodeName, 'b:i');
+	
+	$got = $document->find('//c:tag');
+	is($got->size, 1, "Find all elements in the namespace 'c'");
+	is($got->[0]->nodeName, 'c:tag');
+	
+	$got = $document->find('//default:*');
+	is($got->size, 2, "Find all elements in the default namespace");
+	is($got->[0]->nodeName, 'g1');
+	
+	$got = $document->find('//default1:*');
+	is($got->size, 2, "Find all elements in the default1 namespace");
+	is_deeply(
+		[ map { $_->nodeName }  $got->get_nodelist ],
+		[ qw(g2 b) ],
+		"Match element names for namespace 'default1'"
 	);
 }
 
 
 # Reads an empty file (there's no document)
 sub test_empty_document {
-	my $document = Xacobeo::Document->new("$FOLDER/empty.xml");
+	my $document = Xacobeo::Document->new("$FOLDER/empty.xml", 'xml');
 	isa_ok($document, 'Xacobeo::Document');
 	
 	is_deeply(
@@ -216,21 +300,21 @@ sub test_empty_document {
 	);
 	
 	
-	is($document->xml, undef);
-	test_die(
-		sub {$document->find('/')},
-		qr/^Document node is missing/
-	);
-	test_die(
-		sub {$document->find('42')},
-		qr/^Document node is missing/
-	);
+	is($document->documentNode, undef, 'there is no node');
+	throws_ok
+		{$document->find('/')}
+		qr/^Document node is missing/,
+		q(throws 'Document node is missing');
+	throws_ok
+		{$document->find('42')}
+		qr/^Document node is missing/,
+		q(again throws 'Document node is missing');
 }
 
 
 # Reads a document that has only the XML PI (Document without root element)
 sub test_empty_pi_document {
-	my $document = Xacobeo::Document->new("$FOLDER/empty-pi.xml");
+	my $document = Xacobeo::Document->new("$FOLDER/empty-pi.xml", 'xml');
 	isa_ok($document, 'Xacobeo::Document');
 	
 	is_deeply(
@@ -240,8 +324,8 @@ sub test_empty_pi_document {
 	);
 
 	
-	isa_ok($document->xml, 'XML::LibXML::Document', "Parsed an XML document");
-	is($document->xml->getDocumentElement, undef);
+	isa_ok($document->documentNode, 'XML::LibXML::Document', "Parsed an XML document");
+	is($document->documentNode->getDocumentElement, undef);
 
 	my $list = $document->find('/');
 	is($list->size, 1);
@@ -250,27 +334,4 @@ sub test_empty_pi_document {
 	isa_ok($root, 'XML::LibXML::Document');
 	my @child = $root->childNodes;
 	is(scalar(@child), 0);
-}
-
-
-# Test that an error is thrown
-sub test_die {
-  my ($code, $regexp) = @_;
-  croak "usage(code, regexp)" unless ref $code eq 'CODE';
-	
-  my $passed = 0;
-  local $@ = undef;
-	eval {
-    $code->();
-  };
-  if (my $error = $@) {
-    if ($error =~ /$regexp/) {
-      $passed = 1;
-    }
-    else {
-      diag("Expected $regexp but got $error");
-    }
-  }
-
-  return Test::More->builder->ok($passed);
 }

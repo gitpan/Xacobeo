@@ -6,7 +6,7 @@ Xacobeo::Document - An XML document and it's related information.
 
 	use Xacobeo::Document;
 	
-	my $document = Xacobeo::Document->new('file.xml');
+	my $document = Xacobeo::Document->new('file.xml', 'xml');
 	
 	my $namespaces = $document->namespaces(); # Hashref
 	while (my ($uri, $prefix) = each %{ $namespaces }) {
@@ -49,7 +49,7 @@ use base qw(Class::Accessor::Fast);
 __PACKAGE__->mk_accessors(
 	qw(
 		source
-		xml
+		documentNode
 		xpath
 	)
 );
@@ -66,13 +66,13 @@ Parameters:
 =cut
 
 sub new {
-	croak 'Usage: ', __PACKAGE__, '->new($source)' unless @_ > 1;
+	croak 'Usage: ', __PACKAGE__, '->new($source, $type)' unless @_ == 3;
 	my $class = shift;
-	my ($source) = @_;
+	my ($source, $type) = @_;
 	
 	my $self = bless {}, ref($class) || $class;
 	
-	$self->_load_document($source);
+	$self->_load_document($source, $type);
 
 	return $self;	
 }
@@ -95,11 +95,11 @@ Parameters:
 sub find {
 	my $self = shift;
 	my ($xpath) = @_;
-	croak __("Document node is missing") unless defined $self->xml;
+	croak __("Document node is missing") unless defined $self->documentNode;
 	
 	my $result;
 	eval {
-		$result = $self->xpath->find($xpath, $self->xml);
+		$result = $self->xpath->find($xpath, $self->documentNode);
 	};
 	if (my $error = $@) {
 		croak $error;
@@ -172,7 +172,7 @@ sub get_prefixed_name {
 =head2 namespaces
 
 Returns the namespaces declared in the document. The namespaces are returned in
-a hash REF where the URIs are used as a key and the prefix as a value.
+a hashref where the URIs are used as a key and the prefix as a value.
 
 =cut
 
@@ -191,18 +191,30 @@ sub namespaces {
 #
 sub _load_document {
 	my $self = shift;
-	my ($source) = @_;
+	my ($source, $type) = @_;
 	
 	$self->source($source);
 
 	
 	# Parse the document
 	my $parser = _construct_xml_parser();
-	my $xml = $parser->parse_file($source);
-	$self->xml($xml);
+	my $documentNode;
+	if (! defined $type) {
+		croak "Parameter type must be defined";
+	}
+	elsif ($type eq 'xml') {
+		$documentNode = $parser->parse_file($source);
+	}
+	elsif ($type eq 'html') {
+		$documentNode = $parser->parse_html_file($source);
+	}
+	else {
+		croak __x("Unsupported document type {type}", type => $type);
+	}
+	$self->documentNode($documentNode);
 	
 	# Find the namespaces
-	$self->namespaces(_get_all_namespaces($xml));
+	$self->namespaces(_get_all_namespaces($documentNode));
 	
 	# Create the XPath context
 	$self->xpath(
@@ -241,35 +253,55 @@ sub _get_all_namespaces {
 	my ($node) = @_;
 
 	# Find the namespaces ($uri -> $prefix)
-	my %namespaces = (
-		XML_XML_NS() => 'xml',
+	my %seen = (
+		XML_XML_NS() => [xml => XML_XML_NS()],
 	);
+	# Namespaces found following the document order
+	my @namespaces = (values %seen);
 	if ($node) {
 		foreach my $namespace ($node->findnodes('.//namespace::*')) {
 			my $uri = $namespace->getData;
-			$namespaces{$uri} ||= $namespace->getLocalName;
+			my $name = $namespace->getLocalName;
+			if (! defined $uri) {
+				warn __x("Namespace {name} has no URI", name => $name);
+				$uri = '';
+			}
+			
+			# If the namespace was seen before make sure that we have a decent prefix.
+			# Maybe the previous time there was no prefix associated.
+			if (my $record = $seen{$uri}) {
+				$record->[0] ||= $name; 
+				next;
+			}
+
+			# First time that this namespace is seen
+			my $record = [$name => $uri];
+			$seen{$uri} = $record;
+			push @namespaces, $record;
 		}
 	}
-	
-	# Reverse the namespaces ($prefix -> $uri) and make sure that the prefixes
-	# don't clash with each other.
-	my $cleaned = {};
+
+	# Make sure that the prefixes are unique.
+	my %cleaned = ();
 	my $namespaces = {};
 	my $index = 0;
-	while (my ($uri, $prefix) = each %namespaces) {
+	foreach my $record (@namespaces) {
+		my ($prefix, $uri) = @{ $record };
+
+		# Don't provide a namespace prefix for the default namespace (xmlns="")
+		next if ! defined $prefix && $uri eq "";
 
 		# Make sure that the prefixes are unique
-		if (! defined $prefix or exists $cleaned->{$prefix}) {
+		if (! defined $prefix or exists $cleaned{$prefix}) {
 			# Assign a new prefix until unique
 			do {
-				$prefix = 'default' . ($index ? $index : '');
+				$prefix = 'default' . ($index || '');
 				++$index;
-			} while (exists $cleaned->{$prefix});
+			} while (exists $cleaned{$prefix});
 		}
-		$cleaned->{$prefix} = $uri;
+		$cleaned{$prefix} = $uri;
 		$namespaces->{$uri} = $prefix;
 	}
-
 	return $namespaces;
 }
 

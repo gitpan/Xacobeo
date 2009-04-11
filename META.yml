@@ -1,12 +1,22 @@
 ---
 name: Xacobeo
-version: 0.07
+version: 0.08_01
 author:
   - 'Emmanuel Rodriguez <potyl@cpan.org>'
 abstract: XPath (XML Path Language) visualizer.
 license: perl
 resources:
+  bugtracker: http://code.google.com/p/xacobeo/issues/list
+  homepage: http://code.google.com/p/xacobeo/
   license: http://dev.perl.org/licenses/
+  repository: http://code.google.com/p/xacobeo/source/browse/
+configure_requires:
+  ExtUtils::Depends: 0
+  ExtUtils::ParseXS: 0
+  ExtUtils::PkgConfig: 0
+  File::Path: 0
+  File::Spec::Functions: 0
+  Gtk2: 0
 requires:
   Carp: 0
   Class::Accessor::Fast: 0
@@ -26,12 +36,19 @@ requires:
   XML::LibXML: 0
   perl: 5.6.1
 build_requires:
+  ExtUtils::Depends: 0
+  ExtUtils::ParseXS: 0
+  ExtUtils::PkgConfig: 0
+  File::Path: 0
   File::Slurp: 0
+  File::Spec::Functions: 0
+  Gtk2: 0
+  Test::Exception: 0
   Test::More: 0
 provides:
   Xacobeo:
     file: lib/Xacobeo.pm
-    version: 0.07
+    version: 0.08_01
   Xacobeo::Document:
     file: lib/Xacobeo/Document.pm
   Xacobeo::DomModel:
@@ -48,7 +65,7 @@ provides:
     file: lib/Xacobeo/Utils.pm
   Xacobeo::XS:
     file: lib/Xacobeo/XS.pm
-generated_by: Module::Build version 0.2808
+generated_by: Module::Build version 0.280801
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.2.html
   version: 1.2
