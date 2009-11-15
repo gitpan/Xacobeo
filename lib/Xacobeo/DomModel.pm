@@ -1,5 +1,7 @@
 package Xacobeo::DomModel;
 
+=encoding utf8
+
 =head1 NAME
 
 Xacobeo::DomModel - The DOM model used for the TreeView.
@@ -15,7 +17,7 @@ Xacobeo::DomModel - The DOM model used for the TreeView.
 	
 	# Create the model and link it with the view
 	Xacobeo::DomModel::create_model_with_view(
-		$treeview,	
+		$treeview,
 		sub {
 			my ($node) = @_;
 			print "Selected node ", $node->toString(), "\n";
@@ -34,6 +36,7 @@ The package defines the following functions:
 
 =cut
 
+use 5.006;
 use strict;
 use warnings;
 
@@ -42,7 +45,7 @@ use Gtk2;
 
 use XML::LibXML;
 use Xacobeo::Utils qw(:dom);
-use Xacobeo::I18n;
+use Xacobeo::I18n qw(__);
 
 use Data::Dumper;
 
@@ -89,7 +92,7 @@ in the fashion:
 		$node->isa('XML::LibXML::Node');
 	}
 
-=back	
+=back
 
 =cut
 
@@ -107,16 +110,16 @@ sub create_model_with_view {
 	$treeview->set_model($model);
 	$treeview->signal_connect(row_activated =>
 		sub {
-			my ($treeview, $path, $column) = @_;
+			my (undef, $path) = @_;
 			my $iter = $model->get_iter($path);
 			my $node = $model->get($iter, $NODE_DATA);
 
 			$on_click->($node);
 		}
 	);
-	
+
 	add_columns($treeview);
-	
+
 	return $model;
 }
 
@@ -142,6 +145,8 @@ sub add_columns {
 
 	# Node attribute value (ID attribute)
 	add_text_column($treeview, $NODE_ID_VALUE, __('ID value'));
+
+	return;
 }
 
 
@@ -155,14 +160,14 @@ sub add_text_column {
 	my $cell = Gtk2::CellRendererText->new();
 	my $column = Gtk2::TreeViewColumn->new();
 	$column->pack_end($cell, TRUE);
-	
+
 	$column->set_title($title);
 	$column->set_resizable(TRUE);
 	$column->set_sizing('autosize');
 	$column->set_attributes($cell, text => $field);
 
 	$treeview->append_column($column);
-	
+
 	return $column;
 }
 

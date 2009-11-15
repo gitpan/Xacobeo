@@ -1,5 +1,7 @@
 package Xacobeo::Error;
 
+=encoding utf8
+
 =head1 NAME
 
 Xacobeo::Error - A simple wrapper over an error.
@@ -23,6 +25,7 @@ The package defines the following methods:
 
 =cut
 
+use 5.006;
 use strict;
 use warnings;
 
@@ -33,7 +36,9 @@ use Glib;
 BEGIN {
 	my $enum = __PACKAGE__ . 'Code';
 	Glib::Type->register_enum($enum, 'xpath');
-	Glib::Error::register(__PACKAGE__, $enum);
+	Glib::Error::register(    ##no critic (ProhibitCallsToUnexportedSubs)
+		__PACKAGE__, $enum    # it is supposed to be called that way
+	);
 }
 
 

@@ -1,5 +1,7 @@
 package Xacobeo;
 
+=encoding utf8
+
 =head1 NAME
 
 Xacobeo - XPath (XML Path Language) visualizer.
@@ -72,7 +74,7 @@ use strict;
 use warnings;
 use 5.006;
 
-our $VERSION = '0.08';
+our $VERSION = '0.09';
 
 
 # A true value

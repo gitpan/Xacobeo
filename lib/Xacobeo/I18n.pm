@@ -1,5 +1,7 @@
 package Xacobeo::I18n;
 
+=encoding utf8
+
 =head1 NAME
 
 Xacobeo::I18n - Utilities for internationalization (i18n).
@@ -8,13 +10,13 @@ Xacobeo::I18n - Utilities for internationalization (i18n).
 
 	# Initialize the i18n framework (done once)
 	use FindBin;
-	use Xacobeo::I18n;
+	use Xacobeo::I18n qw();
 	Xacobeo::I18n->init(xacobeo => "$FindBin::Bin/../share/locale/");
 	
 	
 	# Import the i18n utilities (used everywhere where i18n is needed)
-	use Xacobeo::I18n;
-	print _("Hello world"), "\n";
+	use Xacobeo::I18n qw(__);
+	print __("Hello world"), "\n";
 
 =head1 DESCRIPTION
 
@@ -25,7 +27,7 @@ The initialization of the i18n framework should be performed only once,
 preferably as soon as possible. Once the framework is initialized, any module
 requiring to translate a string can include this module.
 
-This module exports automatically the shortcut functions used for translating
+This module exports on request the shortcut functions used for translating
 messages. This is done in order to make the translation transparent.
 
 =head1 FUNCTIONS
@@ -34,15 +36,16 @@ The following functions are available:
 
 =cut
 
+use 5.006;
 use strict;
 use warnings;
 
 use XML::LibXML;
-use Locale::Messages qw (:locale_h :libintl_h);
-use Encode;
+use Locale::Messages qw(dgettext dngettext textdomain bindtextdomain);
+use Encode qw(decode);
 
 use Exporter 'import';
-our @EXPORT = qw(
+our @EXPORT_OK = qw(
 	__
 	__x
 	__n
@@ -68,11 +71,11 @@ Parameters:
 
 The string to translate.
 
-=back	
+=back
 
 =cut
 
-sub __ ($) {
+sub __ {
 	my ($msgid) = @_;
 	return dgettext_utf8($msgid);
 }
@@ -95,11 +98,11 @@ The string to translate.
 
 A series of key/value pairs that will be replacing the place holders.
 
-=back	
+=back
 
 =cut
 
-sub __x ($@) {
+sub __x {
 	my ($msgid, %args) = @_;
 	my $i18n = dgettext_utf8($msgid);
 	return expand($i18n, %args);
@@ -132,11 +135,11 @@ The number of items.
 A series of key/value pairs that will be replacing the place holders.
 
 
-=back	
+=back
 
 =cut
 
-sub __n ($$$) {
+sub __n {
 	my ($msgid, $msgid_plural, $count) = @_;
 	my $i18n = dngettext_utf8($msgid, $msgid_plural, $count);
 	return $i18n;
@@ -144,7 +147,7 @@ sub __n ($$$) {
 
 
 
-=head2 _nx
+=head2 __nx
 
 Translates a string in either singular or plural with variable substitution.
 
@@ -164,12 +167,12 @@ The string in it's plural form (more than one item).
 
 The number of items.
 
-=back	
+=back
 
 
 =cut
 
-sub __nx ($$$%) {
+sub __nx {
 	my ($msgid, $msgid_plural, $count, %args) = @_;
 	my $i18n = dngettext_utf8($msgid, $msgid_plural, $count);
 	return expand($i18n);
@@ -179,7 +182,7 @@ sub __nx ($$$%) {
 
 =head2 __xn
 
-Same as L</_xn>.
+Same as L</__nx>.
 
 Parameters:
 
@@ -197,12 +200,12 @@ The string in it's plural form (more than one item).
 
 The number of items.
 
-=back	
+=back
 
 
 =cut
 
-sub __xn ($$$%) {
+sub __xn {
 	my ($msgid, $msgid_plural, $count, %args) = @_;
 	return __nx($msgid, $msgid_plural, $count, %args);
 }
@@ -212,10 +215,14 @@ sub __xn ($$$%) {
 #
 # Replaces the place markers with their corresponding values.
 #
-sub expand ($%) {
+sub expand {
 	my ($i18n, %args) = @_;
-	my $re = join '|', map { quotemeta $_ } keys %args;
-	$i18n =~ s/\{($re)\}/defined $args{$1} ? $args{$1} : "{$1}"/ge;
+	my $re = join q{|}, map { quotemeta $_ } keys %args;
+	$i18n =~ s{
+		[{] ($re) [}] # capture expressions in literal curlies
+	}{
+		defined $args{$1} ? $args{$1} : "{$1}"
+	}egmsx; # and replace all
 	return $i18n;
 }
 
@@ -227,7 +234,7 @@ sub expand ($%) {
 sub dgettext_utf8 {
 	my ($msgid) = @_;
 	my $i18n = dgettext($DOMAIN, $msgid);
-	return decode("UTF-8", $i18n);
+	return decode('UTF-8', $i18n);
 }
 
 
@@ -238,7 +245,7 @@ sub dgettext_utf8 {
 sub dngettext_utf8 {
 	my ($msgid, $msgid_plural, $count) = @_;
 	my $i18n = dngettext($DOMAIN, $msgid, $msgid_plural, $count);
-	return decode("UTF-8", $i18n);
+	return decode('UTF-8', $i18n);
 }
 
 
@@ -263,18 +270,20 @@ The folder where to find the translation files. For instance for the translation
 F</usr/share/locale/fr/LC_MESSAGES/xacobeo.mo> the folder F</usr/share/locale>
 has to be provided.
 
-=back	
+=back
 
 =cut
 
 sub init {
 	my (undef, $domain, $folder) = @_;
-	
+
 	# Remember the appication's domain
 	$DOMAIN = $domain;
-	
+
 	textdomain($DOMAIN);
 	bindtextdomain($DOMAIN, $folder);
+
+	return;
 }
 
 

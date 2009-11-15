@@ -1,5 +1,7 @@
 package Xacobeo::XS;
 
+=encoding utf8
+
 =head1 NAME
 
 Xacobeo::XS - Functions rewritten in XS.
@@ -48,7 +50,7 @@ L<XML::LibXML::Node>.
 The namespaces declared in the document. Must be an hash ref where the keys are
 the URIs and the values the prefixes of the namespaces.
 
-=back	
+=back
 
 =head2 xacobeo_populate_gtk_tree_store
 
@@ -74,14 +76,15 @@ L<XML::LibXML::Node>.
 The namespaces declared in the document. Must be an hash ref where the keys are
 the URIs and the values the prefixes of the namespaces.
 
-=back	
+=back
 
 =cut
 
+use 5.006;
 use strict;
 use warnings;
 
-use base 'DynaLoader';
+use parent qw(DynaLoader);
 use Gtk2;
 use XML::LibXML;
 
@@ -91,7 +94,7 @@ our @EXPORT_OK = qw(
 	xacobeo_populate_gtk_tree_store
 );
 
-sub dl_load_flags {0x01};
+sub dl_load_flags {return 0x01}
 
 __PACKAGE__->bootstrap;
 

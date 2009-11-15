@@ -1,3 +1,5 @@
+=encoding utf8
+
 =head1 NAME
 
 Xacobeo::Document - An XML document and it's related information.
@@ -24,7 +26,7 @@ Xacobeo::Document - An XML document and it's related information.
 =head1 DESCRIPTION
 
 This package wraps an XML document with it's corresponding meta information
-(namespaces, source, etc).
+(namespaces, XPath context, document node, etc).
 
 =head1 METHODS
 
@@ -33,24 +35,25 @@ The package defines the following methods:
 =cut
 
 package Xacobeo::Document;
-
+use 5.006;
 use strict;
 use warnings;
 
-use XML::LibXML;
+use English qw(-no_match_vars $EVAL_ERROR);
+use XML::LibXML qw(XML_XML_NS);
 use Data::Dumper;
-use Carp;
+use Carp qw(croak);
 
 use Xacobeo::Utils qw(:dom);
-use Xacobeo::I18n;
+use Xacobeo::I18n qw(__ __x);
 
 
-use base qw(Class::Accessor::Fast);
+use parent qw(Class::Accessor::Fast);
 __PACKAGE__->mk_accessors(
 	qw(
-		source
 		documentNode
 		xpath
+		namespaces
 	)
 );
 
@@ -66,16 +69,35 @@ Parameters:
 =cut
 
 sub new {
-	croak 'Usage: ', __PACKAGE__, '->new($source, $type)' unless @_ == 3;
-	my $class = shift;
-	my ($source, $type) = @_;
-	
+	my ($class, $source, $type) = @_;
+	if (! (defined $source && defined $type)) {
+		croak 'Usage: ', __PACKAGE__, '->new($source, $type)'
+	}
+
 	my $self = bless {}, ref($class) || $class;
-	
+
 	$self->_load_document($source, $type);
 
-	return $self;	
+	return $self;
 }
+
+
+=head2 namespaces
+
+Returns the namespaces declared in the document. The namespaces are returned in
+a hashref where the URIs are used as a key and the prefix as a value.
+
+=head2 documentNode
+
+Returns the document's node (an instance of L<XML::LibXML::Document>).
+
+=head2 xpath
+
+Returns the XPath context (an instance of L<XML::LibXML::XPathContext>) that
+includes the namespaces declared in the document. This is the context used to
+execute all XPath queries.
+
+=cut
 
 
 =head2 find
@@ -93,18 +115,15 @@ Parameters:
 =cut
 
 sub find {
-	my $self = shift;
-	my ($xpath) = @_;
+	my ($self, $xpath) = @_;
 	croak __("Document node is missing") unless defined $self->documentNode;
-	
+
 	my $result;
 	eval {
 		$result = $self->xpath->find($xpath, $self->documentNode);
-	};
-	if (my $error = $@) {
-		croak $error;
-	}
-	
+		1;
+	} or croak $EVAL_ERROR;
+
 	return $result;
 }
 
@@ -125,8 +144,7 @@ Parameters:
 =cut
 
 sub validate {
-	my $self = shift;
-	my ($xpath) = @_;
+	my ($self, $xpath) = @_;
 
 	# Validate the XPath expression in an empty document, this is a performance
 	# trick. If the XPath expression is something insane '//*' we don't want to
@@ -134,12 +152,8 @@ sub validate {
 	my $empty = XML::LibXML->createDocument();
 	eval {
 		$self->xpath->find($xpath, $empty);
-	};
-	if (my $error = $@) {
-#		print Dumper($error);
-#		warn "Failed to process the XPath expression '$xpath' because: $error.";
-		return;
-	}
+		1;
+	} or return;
 
 	return 1;
 }
@@ -153,8 +167,7 @@ namespaces are used.
 =cut
 
 sub get_prefixed_name {
-	my $self = shift;
-	my ($node) = @_;
+	my ($self, $node) = @_;
 
 	my $name = $node->localname;
 	my $uri = $node->namespaceURI();
@@ -168,58 +181,39 @@ sub get_prefixed_name {
 }
 
 
-
-=head2 namespaces
-
-Returns the namespaces declared in the document. The namespaces are returned in
-a hashref where the URIs are used as a key and the prefix as a value.
-
-=cut
-
-sub namespaces {
-	my $self = shift;
-	if (@_) {
-		$self->{namespaces} = $_[0];
-	}
-	return $self->{namespaces};
-}
-
-
 #
 # Loads the XML document. This method will also find the namespaces used in the
 # document.
 #
 sub _load_document {
-	my $self = shift;
-	my ($source, $type) = @_;
-	
-	$self->source($source);
+	my ($self, $source, $type) = @_;
 
-	
 	# Parse the document
 	my $parser = _construct_xml_parser();
-	my $documentNode;
+	my $document_node;
 	if (! defined $type) {
-		croak "Parameter type must be defined";
+		croak __("Parameter 'type' must be defined");
 	}
 	elsif ($type eq 'xml') {
-		$documentNode = $parser->parse_file($source);
+		$document_node = $parser->parse_file($source);
 	}
 	elsif ($type eq 'html') {
-		$documentNode = $parser->parse_html_file($source);
+		$document_node = $parser->parse_html_file($source);
 	}
 	else {
 		croak __x("Unsupported document type {type}", type => $type);
 	}
-	$self->documentNode($documentNode);
-	
+	$self->documentNode($document_node);
+
 	# Find the namespaces
-	$self->namespaces(_get_all_namespaces($documentNode));
-	
+	$self->namespaces(_get_all_namespaces($document_node));
+
 	# Create the XPath context
 	$self->xpath(
 		$self->_create_xpath_context()
 	);
+
+	return;
 }
 
 
@@ -232,7 +226,7 @@ sub _construct_xml_parser {
 	$parser->line_numbers(1);
 	$parser->recover_silently(1);
 	$parser->complete_attributes(0);
-	
+
 	return $parser;
 }
 
@@ -256,6 +250,15 @@ sub _get_all_namespaces {
 	my %seen = (
 		XML_XML_NS() => [xml => XML_XML_NS()],
 	);
+	# %seen will look like this:
+	# (
+	#     'http://www.example.org/a' => ['a', 'http://www.example.org/a',],
+	#     'http://www.example.org/b' => ['b', 'http://www.example.org/b',],
+	#     'http://www.example.org/c' => ['c', 'http://www.example.org/c',],
+	#     'http://www.w3.org/XML/1998/namespace' =>
+	#     ['xml', 'http://www.w3.org/XML/1998/namespace',],
+	# )
+
 	# Namespaces found following the document order
 	my @namespaces = (values %seen);
 	if ($node) {
@@ -266,33 +269,33 @@ sub _get_all_namespaces {
 				warn __x("Namespace {name} has no URI", name => $name);
 				$uri = '';
 			}
-			
+
 			# If the namespace was seen before make sure that we have a decent prefix.
 			# Maybe the previous time there was no prefix associated.
-			if (my $record = $seen{$uri}) {
-				$record->[0] ||= $name; 
+			if (my $namespace_record = $seen{$uri}) {
+				$namespace_record->[0] ||= $name;
 				next;
 			}
 
 			# First time that this namespace is seen
-			my $record = [$name => $uri];
-			$seen{$uri} = $record;
-			push @namespaces, $record;
+			my $namespace_record = [$name => $uri];
+			$seen{$uri} = $namespace_record;
+			push @namespaces, $namespace_record;
 		}
 	}
 
 	# Make sure that the prefixes are unique.
-	my %cleaned = ();
+	my %cleaned;
 	my $namespaces = {};
 	my $index = 0;
-	foreach my $record (@namespaces) {
-		my ($prefix, $uri) = @{ $record };
+	foreach my $namespace_record (@namespaces) {
+		my ($prefix, $uri) = @{ $namespace_record };
 
 		# Don't provide a namespace prefix for the default namespace (xmlns="")
 		next if ! defined $prefix && $uri eq "";
 
 		# Make sure that the prefixes are unique
-		if (! defined $prefix or exists $cleaned{$prefix}) {
+		if (not defined $prefix or exists $cleaned{$prefix}) {
 			# Assign a new prefix until unique
 			do {
 				$prefix = 'default' . ($index || '');
@@ -312,14 +315,14 @@ sub _get_all_namespaces {
 #
 sub _create_xpath_context {
 	my $self = shift;
-	
+
 	my $context = XML::LibXML::XPathContext->new();
 
 	# Add the namespaces to the XPath context
 	while (my ($uri, $prefix) = each %{ $self->namespaces }) {
 		$context->registerNs($prefix, $uri);
 	}
-	
+
 	return $context;
 }
 

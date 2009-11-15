@@ -14,6 +14,8 @@ Build.PL
 MANIFEST
 MANIFEST.SKIP
 META.yml
+HACKING
+AUTHORS
 README
 commands
 share/applications/xacobeo.desktop
@@ -43,6 +45,8 @@ xs/logger.h
 xs/main.c
 xs/ppport.h
 xs/XS.xs
+xt/perlcritic.t
+xt/perlcriticrc
 po/de.po
 po/es.po
 po/fr.po
