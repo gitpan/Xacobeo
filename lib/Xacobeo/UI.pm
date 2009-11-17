@@ -32,7 +32,7 @@ use Gtk2;
 use Gtk2::GladeXML;
 use Gtk2::SimpleList;
 use Gtk2::Pango qw(PANGO_WEIGHT_LIGHT PANGO_WEIGHT_BOLD);
-use Gtk2::SourceView;
+use Gtk2::SourceView2;
 
 use Data::Dumper;
 use Carp qw(croak);
@@ -187,12 +187,7 @@ sub construct_dom_tree_view {
 	# Create the model and link it with the view
 	Xacobeo::DomModel::create_model_with_view( ##no critic (ProhibitCallsToUnexportedSubs)
 		$treeview,
-		sub {
-			my ($node) = @_;
-			# Display the node in results text view. Temporary hack, in the future
-			# clicking on the node will display the node finition in the sourve view.
-			$self->display_results($node);
-		},
+		sub { $self->callback_on_selected_node(@_) }
 	);
 
 	return;
@@ -200,7 +195,50 @@ sub construct_dom_tree_view {
 
 
 #
-# Displays an XML node into a text view. This mehtod clears the view of it's old
+# Display the selected node in the text view and in the source view. The
+# selection is made from the tree view and we receive an unique XPath expression
+# that will get us to the selected node.
+#
+sub callback_on_selected_node {
+	my ($self, $xpath) = @_;
+
+	my $node = $self->document->find($xpath)->[0];
+
+	my $textview = $self->glade->get_widget('xml-document');
+	my $buffer = $textview->get_buffer;
+
+	# Clear any previous selection
+	if (my $marks = delete $self->{selected}) {
+		my @iters = map { $buffer->get_iter_at_mark($_) } @{ $marks };
+		$buffer->remove_tag_by_name('selected', @iters);
+	}
+
+	# Scroll to the right place in the source view
+	my $mark_start = $buffer->get_mark("$xpath|start");
+	if ($mark_start) {
+		my $iter_start = $buffer->get_iter_at_mark($mark_start);
+		$buffer->place_cursor($iter_start);
+
+		my $mark_end = $buffer->get_mark("$xpath|end");
+		my $iter_end = $buffer->get_iter_at_mark($mark_end);
+
+		$buffer->apply_tag_by_name('selected', $iter_start, $iter_end);
+		$textview->scroll_to_mark($mark_start, 0.25, FALSE, 0.0, 0.5);
+
+		$self->{selected} = [$mark_start, $mark_end];
+	}
+	else {
+		print "Got no mark at $xpath!\n";
+	}
+
+	# Show the results of the selection
+	$self->display_results($node);
+}
+
+
+
+#
+# Displays an XML node into a text view. This mehtod clears the view of its old
 # content before displaying the new data.
 #
 sub display_xml_node {
@@ -211,7 +249,7 @@ sub display_xml_node {
 
 	# It's faster to disconnect the buffer from the view and to reconnect it back
 	my $buffer = $textview->get_buffer;
-	$textview->set_buffer(Gtk2::SourceView::Buffer->new(undef));
+	$textview->set_buffer(Gtk2::SourceView2::Buffer->new(undef));
 	$buffer->delete($buffer->get_start_iter, $buffer->get_end_iter);
 
 
@@ -290,7 +328,7 @@ sub display_xml_node {
 
 #
 # Displays an XML node in the results text view and makes sure that the results
-# view is shown. This mehtod clears the view of it's old content.
+# view is shown. This mehtod clears the view of its old content.
 #
 sub display_results {
 	my ($self, $node) = @_;
@@ -581,6 +619,10 @@ sub populate_tag_table {
 
 	add_tag($tag_table, error =>
 		foreground => 'red',
+	);
+
+	add_tag($tag_table, selected =>
+		background => 'yellow',
 	);
 
 	return $tag_table;
@@ -895,13 +937,13 @@ sub glade_custom_handler {
 sub create_xml_document_view {
 	my $self = shift;
 
-	my $tag_table = populate_tag_table(Gtk2::SourceView::TagTable->new());
-	my $buffer = Gtk2::SourceView::Buffer->new($tag_table);
-	$buffer->set('highlight', FALSE);
+	my $tag_table = populate_tag_table(Gtk2::TextTagTable->new());
+	my $buffer = Gtk2::SourceView2::Buffer->new($tag_table);
+	$buffer->set_highlight_syntax(undef);
 	# This will disable the undo/redo forever
 	$buffer->begin_not_undoable_action();
 
-	my $widget = Gtk2::SourceView::View->new_with_buffer($buffer);
+	my $widget = Gtk2::SourceView2::View->new_with_buffer($buffer);
 	$widget->set_editable(FALSE);
 	$widget->set_show_line_numbers(TRUE);
 	$widget->set_highlight_current_line(TRUE);
@@ -930,7 +972,7 @@ sub create_xpath_results_view {
 # would have the given attributes.
 #
 # This function creates a span element with the given attributes that wraps the
-# given text. The text has it's content escaped.
+# given text. The text has its content escaped.
 #
 sub pango_span {
 	my ($text, %attributes) = @_;

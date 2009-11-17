@@ -17,13 +17,15 @@
 #include <string.h>
 
 
-#define buffer_add(xargs, tag, text) my_buffer_add(xargs, tag, text)
+#define buffer_add(xargs, tag, text) my_buffer_add(xargs, tag, NULL, text)
+#define buffer_add_node(xargs, tag, node, text) my_buffer_add(xargs, tag, node, text)
 
-#define buffer_cat(xargs, tag, ...) { \
+#define buffer_cat(xargs, tag, ...) \
+do { \
 	gchar *content = g_strconcat(__VA_ARGS__, NULL); \
-	my_buffer_add(xargs, tag, content); \
+	my_buffer_add(xargs, tag, NULL, content); \
 	g_free(content); \
-}
+} while (FALSE)
 
 // The icon type to use for an element
 #define ICON_ELEMENT "gtk-directory"
@@ -90,6 +92,7 @@ typedef struct _ApplyTag {
 	GtkTextTag *tag;
 	gsize      start;
 	gsize      end;
+	gchar      *path;
 } ApplyTag;
 
 
@@ -118,13 +121,14 @@ typedef struct _TreeRenderCtx {
 //
 static MarkupTags*  my_get_buffer_tags         (GtkTextBuffer *buffer);
 static gchar*       my_to_string               (xmlNode *node);
-static void         my_buffer_add              (TextRenderCtx *xargs, GtkTextTag *tag, const gchar *text);
+static void         my_buffer_add              (TextRenderCtx *xargs, GtkTextTag *tag, xmlNode *node, const gchar *text);
 static void         my_display_document_syntax (TextRenderCtx *xargs, xmlNode *node);
 static gchar*       my_get_node_name_prefixed  (xmlNode *node, HV *namespaces);
 static const gchar* my_get_uri_prefix          (const xmlChar *uri, HV *namespaces);
 static void         my_render_buffer           (TextRenderCtx *xargs);
 static void         my_add_text_and_entity     (TextRenderCtx *xargs, GString *buffer, GtkTextTag *markup, const gchar *entity);
 static void         my_populate_tree_store     (TreeRenderCtx *xargs, xmlNode *node, GtkTreeIter *parent, gint pos);
+static gchar*       my_get_node_path           (xmlNode *node);
 
 static void         my_XML_DOCUMENT_NODE       (TextRenderCtx *xargs, xmlNode *node);
 static void         my_XML_HTML_DOCUMENT_NODE  (TextRenderCtx *xargs, xmlNode *node);
@@ -207,19 +211,14 @@ void xacobeo_populate_gtk_tree_store (GtkTreeStore *store, xmlNode *node, HV *na
 static void my_populate_tree_store (TreeRenderCtx *xargs, xmlNode *node, GtkTreeIter *parent, gint pos) {
 
 	++xargs->calls;
-	GtkTreeIter iter;
-	gboolean done = FALSE;
-	
-	
-	SV *pointer = NULL;
-	if (xargs->namespaces) {
-		// Hack the C main wrapper can't deal with the creation of an SV
-		pointer = PmmNodeToSv(node, xargs->proxy);
-	}
-	gchar *node_name = my_get_node_name_prefixed(node, xargs->namespaces);
 
+
+	gchar *node_name = my_get_node_name_prefixed(node, xargs->namespaces);
+	gchar *node_path = (node->type == XML_ELEMENT_NODE ? my_get_node_path(node) : NULL);
 	
 	// Find out if the node has an attribute that's an ID
+	gboolean done = FALSE;
+	GtkTreeIter iter;
 	for (xmlAttr *attr = node->properties; attr; attr = attr->next) {
 		if (xmlIsID(node->doc, node, attr)) {
 
@@ -235,7 +234,7 @@ static void my_populate_tree_store (TreeRenderCtx *xargs, xmlNode *node, GtkTree
 				xargs->store, &iter, parent, pos,
 	
 				DOM_COL_ICON,         ICON_ELEMENT,
-				DOM_COL_XML_POINTER,  pointer,
+				DOM_COL_XML_PATH,     node_path,
 				DOM_COL_ELEMENT_NAME, node_name,
 				
 				// Add the columns ID_NAME and ID_VALUE
@@ -251,20 +250,20 @@ static void my_populate_tree_store (TreeRenderCtx *xargs, xmlNode *node, GtkTree
 		}
 	}
 	
-	
 	// Add the current node if it wasn't already added
 	if (! done) {
 		gtk_tree_store_insert_with_values(
 			xargs->store, &iter, parent, pos,
 		
 			DOM_COL_ICON,         ICON_ELEMENT,
-			DOM_COL_XML_POINTER,  pointer,
+			DOM_COL_XML_PATH,     node_path,
 			DOM_COL_ELEMENT_NAME, node_name,
 		
 			-1
 		);
 	}
 	g_free(node_name);
+	g_free(node_path);
 
 
 	// Do the children
@@ -393,6 +392,20 @@ static void my_render_buffer (TextRenderCtx *xargs) {
 		gtk_text_buffer_get_iter_at_offset(xargs->buffer, &iter_start, to_apply->start);
 		gtk_text_buffer_get_iter_at_offset(xargs->buffer, &iter_end, to_apply->end);
 		
+		if (to_apply->path) {
+			gchar *name;
+
+			name = g_strjoin("|", to_apply->path, "start", NULL);
+			gtk_text_buffer_create_mark(xargs->buffer, name, &iter_start, TRUE);
+			g_free(name);
+
+			name = g_strjoin("|", to_apply->path, "end", NULL);
+			gtk_text_buffer_create_mark(xargs->buffer, name, &iter_end, FALSE);
+			g_free(name);
+
+			g_free(to_apply->path);
+		}
+
 		// This is the bottleneck of the function. On the #gedit IRC channel it was
 		// suggested that the highlight could be done in an idle callback.
 		g_signal_emit(xargs->buffer, signal_apply_tag_id, 0, to_apply->tag, &iter_start, &iter_end);
@@ -515,7 +528,7 @@ static void my_XML_ELEMENT_NODE (TextRenderCtx *xargs, xmlNode *node) {
 
 	// Start of the element
 	buffer_add(xargs, xargs->markup->syntax, "<");
-	buffer_add(xargs, xargs->markup->element, name);
+	buffer_add_node(xargs, xargs->markup->element, node, name);
 
 
 	// The element's namespace definitions
@@ -894,7 +907,7 @@ static gchar* my_to_string (xmlNode *node) {
 // document into the buffer. Once the buffer is filled the styles can be
 // applied.
 //
-static void my_buffer_add (TextRenderCtx *xargs, GtkTextTag *tag, const gchar *text) {
+static void my_buffer_add (TextRenderCtx *xargs, GtkTextTag *tag, xmlNode *node, const gchar *text) {
 
 	const gchar *content = text ? text : "";
 
@@ -905,12 +918,15 @@ static void my_buffer_add (TextRenderCtx *xargs, GtkTextTag *tag, const gchar *t
 	// UTF-8 may encode one character as multiple bytes.
 	glong end = xargs->buffer_pos + g_utf8_strlen(content, -1);
 
+	gchar *path = node ? my_get_node_path(node) : NULL;
+
 	// Apply the markup if there's a tag
 	if (tag) {
 		ApplyTag to_apply = {
 			.tag   = tag,
 			.start = xargs->buffer_pos,
 			.end   = end,
+			.path  = path,
 		};
 		g_array_append_val(xargs->tags, to_apply);
 	}
@@ -953,4 +969,18 @@ static MarkupTags* my_get_buffer_tags (GtkTextBuffer *buffer) {
 	markup->error  = gtk_text_tag_table_lookup(table, "error");
 
 	return markup;
+}
+
+
+
+//
+// Returns the path of a node. The path is expected to be unique for each node.
+//
+// This function returns a string that has to be freed with g_free().
+//
+static gchar* my_get_node_path (xmlNode *node) {
+	xmlChar *node_path = node ? xmlGetNodePath(node) : NULL;
+	gchar *path = g_strdup(node_path);
+	xmlFree(node_path);
+	return path;
 }
