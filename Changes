@@ -1,6 +1,11 @@
 Changelog for Xacobeo.
 
 
+0.11 Mon Nov 23 20:57:30 CET 2009
+	- Expand the first level by default
+	- Unit test fixes: error messages changed in libxml 2.7.3 (patch by Jozef Kutej)
+
+
 0.10 Tue Nov 17 22:08:35 CET 2009
 	- Issue 10: Link the DOM tree with the XML source.
 	- Issue 39: link DOM tree with text view (duplicate of 10).

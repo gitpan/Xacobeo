@@ -16,6 +16,8 @@ use XML::LibXML qw(XML_XML_NS);
 
 my $FOLDER = "tests";
 my @XML_NS = (XML_XML_NS() => 'xml');
+my $LibXML_VERSION = XML::LibXML::LIBXML_RUNTIME_VERSION;
+
 
 exit main();
 
@@ -57,36 +59,57 @@ sub test_without_namespaces {
 		'Nodes from a non existing element'
 	);
 
-	
-	# Test that an invalid xpath expression throws an error
-	throws_ok
-		{$document->find('//x/')}
-		qr/^(XPath error : )?Invalid expression/,
-		q(throws 'invalid expression');
 
-
-	# Find a existing node set
+	# Find an existing node set
 	$got = $document->find('//description[@xml:lang="es"]');
 	is($got->size, 461, 'A lot of nodes');
 	
+	my $regex_invalid;
+	my $regex_ns;
+	my $regex_syntax;
+	my $regex_func;
+
+	if ($LibXML_VERSION >= 20703) {
+		$regex_invalid = qr/^XPath error : Invalid expression/;
+		$regex_ns      = qr/^XPath error : Undefined namespace prefix/;
+		$regex_syntax  = qr/^XPath error : Invalid predicate/;
+		$regex_func    = qr/^ error : xmlXPathCompOpEval: function aaa not found\nXPath error : Unregistered function/;
+	}
+	elsif ($LibXML_VERSION >= 20632) {
+		$regex_invalid = qr/^XPath error : Invalid expression/;
+		$regex_ns      = qr/^ error : xmlXPathCompiledEval: evaluation failed/;
+		$regex_syntax  = qr/^XPath error : Invalid predicate/;
+		$regex_func    = qr/^XPath error : Unregistered function/;
+	}
+	else {
+		$regex_invalid = qr/^Invalid expression/;
+		$regex_ns      = qr/^Undefined namespace prefix\nxmlXPathCompiledEval: evaluation failed/;
+		$regex_syntax  = qr/^Invalid predicate/;
+		$regex_func    = qr/^xmlXPathCompOpEval: function aaa not found/;
+	}
+
+	# Test that an invalid xpath expression throws an error
+	throws_ok
+		{$document->find('//x/')}
+		$regex_invalid,
+		q(throws 'Invalid expression');
 
 	# Fails because the namespace doesn't exist
 	throws_ok
 		{$document->find('/x:html//x:a[@href]')}
-		qr/^(?:Undefined namespace prefix\n| error : )xmlXPathCompiledEval: evaluation failed/,
-		q(throws 'evaluation failed');
+		$regex_ns,
+		q(throws 'Undefined namespace');
 	
 	# Fails because the syntax is invalid
 	throws_ok
 		{$document->find('/html//a[@href')}
-		qr/^(?:XPath error : )?Invalid predicate/,
+		$regex_syntax,
 		q(throws 'Invalid predicate');
-
 	
 	# Fails because the function aaa() is not defined
 	throws_ok
 		{$document->find('aaa(1)')}
-		qr/^(?:xmlXPathCompOpEval: function aaa not found|XPath error : Unregistered function)/,
+		$regex_func,
 		q(throws 'Unregistered function/function not found');
 
 	
@@ -300,15 +323,23 @@ sub test_empty_document {
 	);
 	
 	
-	is($document->documentNode, undef, 'there is no node');
-	throws_ok
-		{$document->find('/')}
-		qr/^Document node is missing/,
-		q(throws 'Document node is missing');
-	throws_ok
-		{$document->find('42')}
-		qr/^Document node is missing/,
-		q(again throws 'Document node is missing');
+	# libxml 2.7.3 returns XML::LibXML::Document for empty documents
+	if ($document->documentNode) {
+		cmp_ok($LibXML_VERSION, '>=', 20703, 'libxml 2.7.3 or greater');
+		isa_ok($document->documentNode, 'XML::LibXML::Document', 'there is a document');
+		is($document->documentNode->hasChildNodes, 0, 'no child nodes');
+	}
+	else {
+		is($document->documentNode, undef, 'there is no node');
+		throws_ok
+			{$document->find('/')}
+			qr/^Document node is missing/,
+			q(throws 'Document node is missing');
+		throws_ok
+			{$document->find('42')}
+			qr/^Document node is missing/,
+			q(again throws 'Document node is missing');
+	}
 }
 
 
