@@ -1,7 +1,5 @@
 package Xacobeo::I18n;
 
-=encoding utf8
-
 =head1 NAME
 
 Xacobeo::I18n - Utilities for internationalization (i18n).
@@ -10,12 +8,12 @@ Xacobeo::I18n - Utilities for internationalization (i18n).
 
 	# Initialize the i18n framework (done once)
 	use FindBin;
-	use Xacobeo::I18n qw();
-	Xacobeo::I18n->init(xacobeo => "$FindBin::Bin/../share/locale/");
+	use Xacobeo::I18n;
+	Xacobeo::I18n->init("$FindBin::Bin/../share/locale/");
 	
 	
 	# Import the i18n utilities (used everywhere where i18n is needed)
-	use Xacobeo::I18n qw(__);
+	use Xacobeo::I18n;
 	print __("Hello world"), "\n";
 
 =head1 DESCRIPTION
@@ -24,10 +22,10 @@ This package provides utilities that perform i18n. This module relies on
 gettext.
 
 The initialization of the i18n framework should be performed only once,
-preferably as soon as possible. Once the framework is initialized, any module
+preferably as soon as possible. Once the framework is initialized any module
 requiring to translate a string can include this module.
 
-This module exports on request the shortcut functions used for translating
+This module exports automatically the shortcut functions used for translating
 messages. This is done in order to make the translation transparent.
 
 =head1 FUNCTIONS
@@ -36,7 +34,6 @@ The following functions are available:
 
 =cut
 
-use 5.006;
 use strict;
 use warnings;
 
@@ -45,7 +42,7 @@ use Locale::Messages qw(dgettext dngettext textdomain bindtextdomain);
 use Encode qw(decode);
 
 use Exporter 'import';
-our @EXPORT_OK = qw(
+our @EXPORT = qw(
 	__
 	__x
 	__n
@@ -55,7 +52,7 @@ our @EXPORT_OK = qw(
 
 
 # The text domain of the application.
-my $DOMAIN = '';
+my $DOMAIN = 'xacobeo';
 
 
 
@@ -212,6 +209,18 @@ sub __xn {
 
 
 
+=head2 domain
+
+Returns the translation domain.
+
+=cut
+
+sub domain {
+	return $DOMAIN;
+}
+
+
+
 #
 # Replaces the place markers with their corresponding values.
 #
@@ -254,15 +263,11 @@ sub dngettext_utf8 {
 
 Initializes the i18n framework (gettext). Must be called in the fashion:
 
-	Xacobeo::I18n->init($domain, $folder);
+	Xacobeo::I18n->init($folder);
 
 Parameters:
 
 =over
-
-=item * $domain
-
-The name of the gettext domain (program's name).
 
 =item * $folder
 
@@ -275,10 +280,7 @@ has to be provided.
 =cut
 
 sub init {
-	my (undef, $domain, $folder) = @_;
-
-	# Remember the appication's domain
-	$DOMAIN = $domain;
+	my (undef, $folder) = @_;
 
 	textdomain($DOMAIN);
 	bindtextdomain($DOMAIN, $folder);
@@ -297,7 +299,7 @@ Emmanuel Rodriguez E<lt>potyl@cpan.orgE<gt>.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2009 by Emmanuel Rodriguez.
+Copyright (C) 2008,2009 by Emmanuel Rodriguez.
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.8.8 or,

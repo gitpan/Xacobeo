@@ -10,6 +10,8 @@ VERSION=$(shell perl -le "print `grep VERSION lib/Xacobeo.pm`")
 PACKAGE=Xacobeo
 EMAIL=$(shell git config --global user.email)
 
+PERL_MODULES=$(shell find lib/Xacobeo/ -type f -name '*.pm')
+
 # Compiler stuff
 LIBRARIES=gtk+-2.0 libxml-2.0
 
@@ -45,7 +47,7 @@ CC=gcc $(DEBUG_ARGS) -g -std=c99 -Werror -Wall -Wextra -pedantic-errors -pedanti
 
 .PHONY: info
 info:
-	@echo "VERSION ${VERSION}"
+	@echo "VERSION $(VERSION)"
 	@echo "CFLAGS  $(CFLAGS)"
 	@echo "LIBS    $(LIBS)"
 	@echo "CC      $(CC)"
@@ -61,10 +63,10 @@ build: i18n Build
 
 
 .PHONY: install
-install: ${DEST}/local/bin/xacobeo
-${DEST}/local/bin/xacobeo: build
-	rm -rf ${DEST} || true
-	./Build install --install_base ${DEST}
+install: $(DEST)/local/bin/xacobeo
+$(DEST)/local/bin/xacobeo: build
+	rm -rf $(DEST) || true
+	./Build install --install_base $(DEST)
 
 
 .PHONY: fakeinstall
@@ -74,12 +76,12 @@ fakeinstall: build
 
 .PHONY: run
 run: install
-	PERL5LIB=${DEST}/lib/perl5 ${DEST}/bin/xacobeo ${FILE}
+	PERL5LIB=$(DEST)/lib/perl5 $(DEST)/bin/xacobeo $(FILE)
 
 
 .PHONY: dist
-dist: ${PACKAGE}-${VERSION}.tar.gz
-${PACKAGE}-${VERSION}.tar.gz: build
+dist: $(PACKAGE)-$(VERSION).tar.gz
+$(PACKAGE)-$(VERSION).tar.gz: build
 	./Build dist
 
 
@@ -95,7 +97,7 @@ test: xs
 
 .PHONY: tag
 tag:
-	git tag "${VERSION}"
+	git tag "$(VERSION)"
 
 
 .PHONY: push
@@ -105,12 +107,12 @@ push:
 
 .PHONY: upload
 upload: dist
-	cpan-upload -verbose -mailto "${EMAIL}" -user potyl "${PACKAGE}-${VERSION}.tar.gz"
+	cpan-upload -verbose -mailto "$(EMAIL)" -user potyl "$(PACKAGE)-$(VERSION).tar.gz"
 
 
 .PHONY: release
 release: clean test dist distcheck tag push upload
-	@echo "Release ${PACKAGE} ${VERSION} done."
+	@echo "Release $(PACKAGE) $(VERSION) done."
 	
 
 .PHONY: xs
@@ -149,8 +151,8 @@ leaks: main
 .PHONY: clean
 clean:
 	- [ -f Build ] && ./Build clean  > /dev/null 2>&1 || true
-	-rm -rf ${PACKAGE}-*/ 2> /dev/null || true
-	-rm ${PACKAGE}-*.tar.gz 2> /dev/null || true
+	-rm -rf $(PACKAGE)-*/ 2> /dev/null || true
+	-rm $(PACKAGE)-*.tar.gz 2> /dev/null || true
 	-rm libxacobeo-perl_* 2> /dev/null || true
 	-rm Build 2> /dev/null || true
 	-rm -rf _build 2> /dev/null || true
@@ -162,16 +164,7 @@ clean:
 i18n: po/messages.pot po/*.po
 
 
-po/messages.pot: share/xacobeo/xacobeo.glade\
-  bin/xacobeo \
-  lib/Xacobeo/UI.pm \
-  lib/Xacobeo/Timer.pm \
-  lib/Xacobeo/Document.pm \
-  lib/Xacobeo/DomModel.pm \
-  lib/Xacobeo/XS.pm \
-  lib/Xacobeo/I18n.pm \
-  lib/Xacobeo/Utils.pm \
-  lib/Xacobeo.pm 
+po/messages.pot:  bin/xacobeo $(PERL_MODULES)
 	xgettext --language=Perl \
 	  --keyword \
 	  --keyword=__ \
@@ -180,8 +173,7 @@ po/messages.pot: share/xacobeo/xacobeo.glade\
 	  --keyword=__nx:1,2 \
 	  --keyword=__xn \
 	  --keyword=N__ \
-	  -o $@ bin/xacobeo `find lib/ -type f -name '*.pm'`
-	xgettext --language=Glade --join-existing -o $@ share/xacobeo/xacobeo.glade
+	  -o $@ bin/xacobeo $(PERL_MODULES)
 
 
 po/%.po: po/messages.pot

@@ -13,9 +13,9 @@ Options:
    -h, --help            brief help message
    -v, --version         display the version of Xacobeo, XML::LibXML and libxml2
                          that are used and exit
-   --html                use the HTML parser with the provided file
+   --html                parse the input file as an HTML document
 
-Where I<file> is a valid XML document and I<xpath> a valid XPath query.
+Where I<file> is a XML document and I<xpath> a XPath query.
 
 =head1 OPTIONS
 
@@ -71,7 +71,7 @@ Emmanuel Rodriguez E<lt>potyl@cpan.orgE<gt>.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2008 by Emmanuel Rodriguez.
+Copyright (C) 2008,2009 by Emmanuel Rodriguez.
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.8.8 or,
@@ -81,22 +81,20 @@ at your option, any later version of Perl 5 you may have available.
 
 use strict;
 use warnings;
-use open qw(:std :utf8); # STD* in UTF-8
+use open qw(:std :utf8);
 
+use Glib qw(TRUE FALSE);
 use Gtk2 qw(-init);
 
 use Pod::Usage;
 use Getopt::Long qw(:config auto_help);
-use File::Spec::Functions;
-use FindBin;
 use XML::LibXML;
 
 use Xacobeo;
-use Xacobeo::UI;
-use Xacobeo::I18n;
+use Xacobeo::App;
 
 
-exit main();
+exit main() unless caller;
 
 
 #
@@ -111,7 +109,7 @@ sub main {
 		'html' => sub { $type = 'html' },
 		'version|v' => \$do_version,
 	) or pod2usage(2);
-	
+
 	if ($do_version) {
 		printf "Xacobeo version:      %8s\n", $Xacobeo::VERSION;
 		printf "Compiled with libxml: %8s\n", XML::LibXML::LIBXML_DOTTED_VERSION;
@@ -119,47 +117,22 @@ sub main {
 		printf "XML::LibXML version:  %8s\n", $XML::LibXML::VERSION;
 		return 0;
 	}
-	
-	# Create a new instance of this application
-	my $folder = find_app_folder();
-	my $domain = 'xacobeo';
-	Xacobeo::I18n->init($domain => catdir($folder, 'share', 'locale'));
 
-	my $xacobeo = Xacobeo::UI->new($folder, $domain);
-	
+	# Create a new instance of this application
+	my $xacobeo = Xacobeo::App->get_app();
+
+	# Create the first window
+	my $window = $xacobeo->new_window();
 	if (@ARGV) {
 		my ($source, $xpath) = @ARGV;
-		$xacobeo->load_file($source, $type);
-		$xacobeo->set_xpath($xpath) if defined $xpath;
+		$window->load_file($source, $type);
+		$window->set_xpath($xpath) if defined $xpath;
 	}
-	
+
+	$xacobeo->load_plugins();
+
 	# Start the main loop
 	Gtk2->main();
-	
+
 	return 0;
-}
-
-
-# Return the root folder of the application once installed. The 'root' folder is
-# the one where the installation is done, the root folder hierarchy is as
-# follows:
-#
-# (root)
-# |-- bin
-# |-- lib
-# |   `-- perl5
-# |       |-- Xacobeo
-# |       `-- i486-linux-gnu-thread-multi
-# |               `-- Xacobeo
-# |           `-- auto
-# |               `-- Xacobeo
-# |-- man
-# |   |-- man1
-# |   `-- man3
-# `-- share
-#     |-- applications
-#     |-- pixmaps
-#     `-- xacobeo
-sub find_app_folder {
-	return catdir($FindBin::Bin, '..');
 }

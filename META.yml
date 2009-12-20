@@ -1,6 +1,6 @@
 ---
 name: Xacobeo
-version: 0.11
+version: 0.12
 author:
   - 'Emmanuel Rodriguez <potyl@cpan.org>'
 abstract: XPath (XML Path Language) visualizer.
@@ -19,17 +19,16 @@ configure_requires:
   Gtk2: 0
 requires:
   Carp: 0
-  Class::Accessor::Fast: 0
   Data::Dumper: 0
   DynaLoader: 0
-  English: 0
   Exporter: 0
+  File::BaseDir: 0
   File::Spec::Functions: 0
   FindBin: 0
   Getopt::Long: 0
   Glib: 0
-  Gtk2: 0
-  Gtk2::GladeXML: 0
+  Gtk2: 1.100
+  Gtk2::Ex::Entry::Pango: 0.07
   Gtk2::SourceView2: 0
   Locale::TextDomain: 0
   Pod::Usage: 0
@@ -50,19 +49,33 @@ build_requires:
 provides:
   Xacobeo:
     file: lib/Xacobeo.pm
-    version: 0.11
+    version: 0.12
+  Xacobeo::Accessors:
+    file: lib/Xacobeo/Accessors.pm
+  Xacobeo::App:
+    file: lib/Xacobeo/App.pm
+  Xacobeo::Conf:
+    file: lib/Xacobeo/Conf.pm
   Xacobeo::Document:
     file: lib/Xacobeo/Document.pm
-  Xacobeo::DomModel:
-    file: lib/Xacobeo/DomModel.pm
   Xacobeo::Error:
     file: lib/Xacobeo/Error.pm
   Xacobeo::I18n:
     file: lib/Xacobeo/I18n.pm
+  Xacobeo::Plugin:
+    file: lib/Xacobeo/Plugin.pm
   Xacobeo::Timer:
     file: lib/Xacobeo/Timer.pm
-  Xacobeo::UI:
-    file: lib/Xacobeo/UI.pm
+  Xacobeo::UI::DomView:
+    file: lib/Xacobeo/UI/DomView.pm
+  Xacobeo::UI::SourceView:
+    file: lib/Xacobeo/UI/SourceView.pm
+  Xacobeo::UI::Statusbar:
+    file: lib/Xacobeo/UI/Statusbar.pm
+  Xacobeo::UI::Window:
+    file: lib/Xacobeo/UI/Window.pm
+  Xacobeo::UI::XPathEntry:
+    file: lib/Xacobeo/UI/XPathEntry.pm
   Xacobeo::Utils:
     file: lib/Xacobeo/Utils.pm
   Xacobeo::XS:

@@ -1,4 +1,4 @@
-=encoding utf8
+package Xacobeo::Document;
 
 =head1 NAME
 
@@ -8,7 +8,7 @@ Xacobeo::Document - An XML document and its related information.
 
 	use Xacobeo::Document;
 	
-	my $document = Xacobeo::Document->new('file.xml', 'xml');
+	my $document = Xacobeo::Document->new_from_file('file.xml', 'xml');
 	
 	my $namespaces = $document->namespaces(); # Hashref
 	while (my ($uri, $prefix) = each %{ $namespaces }) {
@@ -34,12 +34,9 @@ The package defines the following methods:
 
 =cut
 
-package Xacobeo::Document;
-use 5.006;
 use strict;
 use warnings;
 
-use English qw(-no_match_vars $EVAL_ERROR);
 use XML::LibXML qw(XML_XML_NS);
 use Data::Dumper;
 use Carp qw(croak);
@@ -48,39 +45,143 @@ use Xacobeo::Utils qw(:dom);
 use Xacobeo::I18n qw(__ __x);
 
 
-use parent qw(Class::Accessor::Fast);
-__PACKAGE__->mk_accessors(
-	qw(
-		documentNode
-		xpath
-		namespaces
-	)
-);
+use Xacobeo::Accessors qw{
+	source
+	type
+	documentNode
+	xpath
+	namespaces
+};
 
 
-=head2 new
+=head2 new_from_file
 
-Creates a new instance.
+Creates a new instance from a file (an URI should also be valid).
 
 Parameters:
 
-	$source: the source of the XML document, this can be a file name.
+	$source: the source of the document, this can be a filename or an URI.
+	$type:   the type of document: C<xml> or C<html>.
 
 =cut
 
-sub new {
+sub new_from_file {
 	my ($class, $source, $type) = @_;
 	if (! (defined $source && defined $type)) {
-		croak 'Usage: ', __PACKAGE__, '->new($source, $type)'
+		croak 'Usage: ', __PACKAGE__, '->new_from_file($source, $type)'
+	}
+
+	# Parse the document
+	my $parser = _construct_xml_parser();
+	my $document_node;
+	if (! defined $type) {
+		croak __("Parameter 'type' must be defined");
+	}
+	elsif ($type eq 'xml') {
+		$document_node = $parser->parse_file($source);
+	}
+	elsif ($type eq 'html') {
+		$document_node = $parser->parse_html_file($source);
 	}
 
 	my $self = bless {}, ref($class) || $class;
+	$self->source($source);
+	$self->type($type);
 
-	$self->_load_document($source, $type);
+	$self->_init($document_node);
 
 	return $self;
 }
 
+
+=head2 new_from_string
+
+Creates a new instance from a string.
+
+Parameters:
+
+	$content: the contents of the document.
+	$type:    the type of document: C<xml> or C<html>.
+
+=cut
+
+sub new_from_string {
+	my ($class, $content, $type) = @_;
+	if (! (defined $content && defined $type)) {
+		croak 'Usage: ', __PACKAGE__, '->new_from_string($content, $type)'
+	}
+
+	# Parse the document
+	my $parser = _construct_xml_parser();
+	my $document_node;
+	if (! defined $type) {
+		croak __("Parameter 'type' must be defined");
+	}
+	elsif ($type eq 'xml') {
+		$document_node = $parser->parse_string($content);
+	}
+	elsif ($type eq 'html') {
+		$document_node = $parser->parse_html_string($content);
+	}
+
+	my $self = bless {}, ref($class) || $class;
+	$self->source('string');
+	$self->type($type);
+
+	$self->_init($document_node);
+
+	return $self;
+}
+
+
+=head2 empty
+
+Returns an empty document.
+
+=cut
+
+sub empty {
+	my ($class) = @_;
+
+	my $self = bless {}, ref($class) || $class;
+	my ($source, $type) = (undef, 'empty');
+	$self->source($source);
+	$self->type($type);
+
+	my $empty = XML::LibXML->createDocument();
+	$self->_init($empty);
+
+	return $self;
+}
+
+
+#
+# Finish the creation of a new instance.
+#
+sub _init {
+	my ($self, $document_node) = @_;
+
+	$self->documentNode($document_node);
+
+	# Find the namespaces
+	$self->namespaces(_get_all_namespaces($document_node));
+
+	# Create the XPath context
+	$self->xpath(
+		$self->_create_xpath_context()
+	);
+
+	return;
+}
+
+
+=head2 source
+
+The source of the document: most likely a file path or an URI.
+
+=head2 type
+
+The type of document: I<xml> or I<html>.
 
 =head2 namespaces
 
@@ -122,7 +223,7 @@ sub find {
 	eval {
 		$result = $self->xpath->find($xpath, $self->documentNode);
 		1;
-	} or croak $EVAL_ERROR;
+	} or croak $@;
 
 	return $result;
 }
@@ -182,42 +283,6 @@ sub get_prefixed_name {
 
 
 #
-# Loads the XML document. This method will also find the namespaces used in the
-# document.
-#
-sub _load_document {
-	my ($self, $source, $type) = @_;
-
-	# Parse the document
-	my $parser = _construct_xml_parser();
-	my $document_node;
-	if (! defined $type) {
-		croak __("Parameter 'type' must be defined");
-	}
-	elsif ($type eq 'xml') {
-		$document_node = $parser->parse_file($source);
-	}
-	elsif ($type eq 'html') {
-		$document_node = $parser->parse_html_file($source);
-	}
-	else {
-		croak __x("Unsupported document type {type}", type => $type);
-	}
-	$self->documentNode($document_node);
-
-	# Find the namespaces
-	$self->namespaces(_get_all_namespaces($document_node));
-
-	# Create the XPath context
-	$self->xpath(
-		$self->_create_xpath_context()
-	);
-
-	return;
-}
-
-
-#
 # Creates and setups the internal XML parser to use by this instance.
 #
 sub _construct_xml_parser {
@@ -226,6 +291,7 @@ sub _construct_xml_parser {
 	$parser->line_numbers(1);
 	$parser->recover_silently(1);
 	$parser->complete_attributes(0);
+	$parser->expand_entities(0);
 
 	return $parser;
 }
@@ -298,7 +364,7 @@ sub _get_all_namespaces {
 		if (not defined $prefix or exists $cleaned{$prefix}) {
 			# Assign a new prefix until unique
 			do {
-				$prefix = 'default' . ($index || '');
+				$prefix = 'ns' . ($index || '');
 				++$index;
 			} while (exists $cleaned{$prefix});
 		}
@@ -330,13 +396,14 @@ sub _create_xpath_context {
 # A true value
 1;
 
+
 =head1 AUTHORS
 
 Emmanuel Rodriguez E<lt>potyl@cpan.orgE<gt>.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2008 by Emmanuel Rodriguez.
+Copyright (C) 2008,2009 by Emmanuel Rodriguez.
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.8.8 or,
