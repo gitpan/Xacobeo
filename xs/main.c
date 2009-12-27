@@ -21,7 +21,7 @@
 
 static void               my_create_buffer_tags (GtkTextBuffer *buffer);
 static void               my_create_widgets     (GtkTextView **textview, GtkTreeView **treeview);
-static GtkTreeViewColumn* my_add_text_column    (GtkTreeView *treeview, DomModelColumnsEnum field, const gchar *title);
+static GtkTreeViewColumn* my_add_text_column    (GtkTreeView *treeview, DomModelColumnsEnum field, const gchar *title, gint width);
 static GtkWidget*         my_create_textview    (void);
 static GtkWidget*         my_create_treeview    (void);
 static GtkWidget*         my_wrap_in_scrolls    (GtkWidget *widget);
@@ -30,20 +30,44 @@ static xmlDoc*            my_parse_document     (const gchar *filename);
 
 int main (int argc, char **argv) {
 
+	gboolean no_xml    = FALSE;
+	gboolean no_source = FALSE;
+	gboolean no_dom    = FALSE;
+	gboolean quit      = FALSE;
+
 	// Parse the arguments
 	gtk_init(&argc, &argv);
-	
-	if (argc < 2) {
-		g_printf("Usage: %s file [quit]\n", argv[0]);
+
+	GOptionEntry entries[] = {
+		{ "no-xml",    'X', 0, G_OPTION_ARG_NONE, &no_xml,    "Don't load the XML document", NULL },
+		{ "no-source", 'S', 0, G_OPTION_ARG_NONE, &no_source, "Don't show the XML source", NULL },
+		{ "no-dom",    'D', 0, G_OPTION_ARG_NONE, &no_dom,    "Don't show the DOM tree", NULL },
+		{ "quit",      'q', 0, G_OPTION_ARG_NONE, &quit,      "Quit as soon as the proram is ready", NULL },
+		{ NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL  },
+	};
+
+	GError *error = NULL;
+	GOptionContext *context = g_option_context_new("- memory profiling");
+	g_option_context_add_main_entries(context, entries, NULL);
+	g_option_context_add_group(context, gtk_get_option_group(TRUE));
+	if (!g_option_context_parse(context, &argc, &argv, &error)) {
+		ERROR("option parsing failed: %s", error->message);
+		g_error_free(error);
+		return 1;
+	}
+
+	if (argc < 1) {
+		ERROR("Usage: %s file\n", argv[0]);
 		return 1;
 	}
 	char *filename = argv[1];
 
+
 	// Load the XML document
 	DEBUG("Reading file %s", filename);
-	xmlDoc *document = my_parse_document(filename);
-	if (document == NULL) {
-		g_printf("Failed to parse %s\n", filename);
+	xmlDoc *document = !no_xml ? my_parse_document(filename) : NULL;
+	if (!no_xml && document == NULL) {
+		ERROR("Failed to parse %s", filename);
 		return 1;
 	}
 	INFO("Read file %s", filename);
@@ -58,7 +82,7 @@ int main (int argc, char **argv) {
 	// Fill the TextView (it's faster to remove the buffer and to put it back)
 	GtkTextBuffer *buffer = gtk_text_view_get_buffer(textview);
 	gtk_text_view_set_buffer(textview, NULL);
-	xacobeo_populate_gtk_text_buffer(buffer, (xmlNode *) document, NULL);
+	if (!no_source) xacobeo_populate_gtk_text_buffer(buffer, (xmlNode *) document, NULL);
 	gtk_text_view_set_buffer(textview, buffer);
 
 	// Scroll to the beginning of the text
@@ -69,15 +93,15 @@ int main (int argc, char **argv) {
 	GtkTreeStore *store = GTK_TREE_STORE(gtk_tree_view_get_model(treeview));
 	gtk_tree_view_set_model(treeview, NULL);
 	gtk_tree_store_clear(store);
-	xacobeo_populate_gtk_tree_store(store, (xmlNode *) document, NULL);
+	if (!no_dom) xacobeo_populate_gtk_tree_store(store, (xmlNode *) document, NULL);
 	gtk_tree_view_set_model(treeview, GTK_TREE_MODEL(store));
 
 	INFO("Freeing XML document");
-	xmlFreeDoc(document);
+	if (document) xmlFreeDoc(document);
 	
 
 	// If we just want to time the execution time we don't need an event loop
-	if (! (argc > 2 && strcmp("quit", argv[2]) == 0) ) {
+	if (!quit) {
 		// Main event loop
 		INFO("Starting main loop");
 		gtk_main();
@@ -91,11 +115,12 @@ int main (int argc, char **argv) {
 }
 
 
+
 //
 // Creates the main widgets and prepares them for displaying. This function
 // returns the GtkTextView casted as a GtkWidget.
 //
-static void my_create_widgets (GtkTextView **prt_textview, GtkTreeView **prt_treeview) {
+static void my_create_widgets (GtkTextView **ptr_textview, GtkTreeView **ptr_treeview) {
 	
 	// The main widgets
 	GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
@@ -118,8 +143,8 @@ static void my_create_widgets (GtkTextView **prt_textview, GtkTreeView **prt_tre
 
 
 	// Set the return values
-	*prt_textview = GTK_TEXT_VIEW(textview);
-	*prt_treeview = GTK_TREE_VIEW(treeview);
+	*ptr_textview = GTK_TEXT_VIEW(textview);
+	*ptr_treeview = GTK_TREE_VIEW(treeview);
 }
 
 
@@ -129,8 +154,10 @@ static void my_create_widgets (GtkTextView **prt_textview, GtkTreeView **prt_tre
 //
 static GtkWidget* my_create_textview (void) {
 	// Prepare the text view
-	GtkWidget *textview = gtk_text_view_new();
-	GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(textview));
+	GtkTextTagTable *table = gtk_text_tag_table_new();
+	GtkTextBuffer *buffer = gtk_text_buffer_new(table);
+	GtkWidget *textview = gtk_text_view_new_with_buffer(buffer);
+
 	my_create_buffer_tags(buffer);
 
 	gtk_widget_set_size_request(textview, 600, 400);
@@ -149,18 +176,24 @@ static GtkWidget* my_create_treeview (void) {
 	// Prepre the tree view
 	GtkWidget *treeview = gtk_tree_view_new();
 	GtkTreeStore *store = gtk_tree_store_new(5,
-		G_TYPE_POINTER, 
+		G_TYPE_STRING, 
 		G_TYPE_STRING,
 		G_TYPE_STRING,
 		G_TYPE_STRING,
 		G_TYPE_STRING
 	);
 	gtk_tree_view_set_model(GTK_TREE_VIEW(treeview), GTK_TREE_MODEL(store));
+	gtk_tree_view_set_fixed_height_mode(GTK_TREE_VIEW(treeview), TRUE);
 	
 	
 	
 	// Element name
-	GtkTreeViewColumn *column = my_add_text_column(GTK_TREE_VIEW(treeview), DOM_COL_ELEMENT_NAME, "Element");
+	GtkTreeViewColumn *column = my_add_text_column(
+		GTK_TREE_VIEW(treeview),
+		DOM_COL_ELEMENT_NAME,
+		"Element",
+		150
+	);
 
 	// Icon
 	GtkCellRenderer *cell = gtk_cell_renderer_pixbuf_new();
@@ -168,21 +201,22 @@ static GtkWidget* my_create_treeview (void) {
 	gtk_tree_view_column_set_attributes(column, cell, "stock-id", DOM_COL_ICON, NULL);
 	
 	// XML::ID
-	my_add_text_column(GTK_TREE_VIEW(treeview), DOM_COL_ID_NAME, "ID name");
-	my_add_text_column(GTK_TREE_VIEW(treeview), DOM_COL_ID_VALUE, "ID value");
+	my_add_text_column(GTK_TREE_VIEW(treeview), DOM_COL_ID_NAME, "ID name", 75);
+	my_add_text_column(GTK_TREE_VIEW(treeview), DOM_COL_ID_VALUE, "ID value", 75);
 
 	return treeview;
 }
 
 
-static GtkTreeViewColumn* my_add_text_column (GtkTreeView *treeview, DomModelColumnsEnum field, const gchar *title) {
+static GtkTreeViewColumn* my_add_text_column (GtkTreeView *treeview, DomModelColumnsEnum field, const gchar *title, gint width) {
 	GtkCellRenderer *cell = gtk_cell_renderer_text_new();
 	GtkTreeViewColumn *column = gtk_tree_view_column_new();
 	gtk_tree_view_column_pack_end(column, cell, TRUE);
 	
 	gtk_tree_view_column_set_title(column, title);
 	gtk_tree_view_column_set_resizable(column, TRUE);
-	gtk_tree_view_column_set_sizing(column, GTK_TREE_VIEW_COLUMN_AUTOSIZE);
+	gtk_tree_view_column_set_sizing(column, GTK_TREE_VIEW_COLUMN_FIXED);
+	gtk_tree_view_column_set_fixed_width(column, width);
 	gtk_tree_view_column_set_attributes(column, cell, "text", field, NULL);
 
 	gtk_tree_view_append_column(treeview, column);

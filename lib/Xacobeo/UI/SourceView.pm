@@ -23,6 +23,16 @@ Xacobeo::UI::SourceView - Text editor that displays XML.
 The text editor widget that's used for displaying XML. This widget is a
 L<Gtk2::SourceView2::View>.
 
+=head1 PROPERTIES
+
+=head2 document
+
+The document being displayed.
+
+=head2 namespaces
+
+The namespaces registered in the document.
+
 =head1 METHODS
 
 The following methods are available:
@@ -53,13 +63,29 @@ use Xacobeo::Utils qw(
 );
 use Xacobeo::XS;
 use Xacobeo::I18n;
+use Xacobeo::Document;
+use Xacobeo::GObject;
 
-use Xacobeo::Accessors qw{
-	document
-	namespaces
-};
 
-use Glib::Object::Subclass 'Gtk2::SourceView2::View';
+Xacobeo::GObject->register_package('Gtk2::SourceView2::View' =>
+	properties => [
+		Glib::ParamSpec->object(
+			'document',
+			"Document",
+			"The main document being displayed.",
+			'Xacobeo::Document',
+			['readable', 'writable'],
+		),
+
+		# FIXME this property is redundant as we can use $self->document->namespaces
+		Glib::ParamSpec->scalar(
+			'namespaces',
+			"Namespaces",
+			"The namespaces in the main document.",
+			['readable', 'writable'],
+		),
+	],
+);
 
 
 # The tag table shared by all editors
@@ -123,7 +149,7 @@ sub show_node {
 	my $self = shift;
 	my ($node) = @_;
 
-	my $xpath = $node->nodePath;
+	my $mark_name = Xacobeo::XS::->get_node_mark($node);
 	my $buffer = $self->get_buffer;
 
 	# Clear any previous selection
@@ -133,12 +159,12 @@ sub show_node {
 	}
 
 	# Scroll to the right place in the source view
-	my $mark_start = $buffer->get_mark("$xpath|start");
+	my $mark_start = $buffer->get_mark("$mark_name|start");
 	if ($mark_start) {
 		my $iter_start = $buffer->get_iter_at_mark($mark_start);
 		$buffer->place_cursor($iter_start);
 
-		my $mark_end = $buffer->get_mark("$xpath|end");
+		my $mark_end = $buffer->get_mark("$mark_name|end");
 		my $iter_end = $buffer->get_iter_at_mark($mark_end);
 
 		$buffer->apply_tag_by_name('selected', $iter_start, $iter_end);
@@ -147,7 +173,7 @@ sub show_node {
 		$self->{selected} = [$mark_start, $mark_end];
 	}
 	else {
-		print "Got no mark at $xpath!\n";
+		print "Got no mark at $mark_name!\n";
 	}
 }
 

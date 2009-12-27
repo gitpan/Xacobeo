@@ -21,6 +21,30 @@ Xacobeo::UI::DomView - DOM tree view
 
 The application's main window. This widget is a L<Gtk2::TreeView>.
 
+=head1 PROPERTIES
+
+The following properties are defined:
+
+=head2 ui-manager
+
+The UI Manager used by this widget.
+
+=head2 action-group
+
+The action group that provides the values in the context menu.
+
+=head2 menu
+
+The context menu of the widget.
+
+=head2 document
+
+The document being displayed.
+
+=head2 namespaces
+
+The namespaces registered in the document.
+
 =head1 METHODS
 
 The following methods are available:
@@ -40,13 +64,53 @@ use Glib qw(TRUE FALSE);
 use Gtk2;
 use Xacobeo::I18n;
 use Xacobeo::XS;
+use Xacobeo::Document;
 
-use Xacobeo::Accessors qw{
-	document
-	namespaces
-};
+use Xacobeo::GObject;
 
-use Glib::Object::Subclass 'Gtk2::TreeView' =>
+Xacobeo::GObject->register_package('Gtk2::TreeView' =>
+	properties => [
+		Glib::ParamSpec->object(
+			'ui-manager',
+			"UI Manager",
+			"The UI Manager that provides the UI",
+			'Gtk2::UIManager',
+			['readable', 'writable'],
+		),
+
+		Glib::ParamSpec->object(
+			'action-group',
+			"Action Group",
+			"The action group with context menu entries",
+			'Gtk2::ActionGroup',
+			['readable', 'writable'],
+		),
+
+		Glib::ParamSpec->object(
+			'menu',
+			"Context Menu",
+			"The context menu for the tree items",
+			'Gtk2::ActionGroup',
+			['readable', 'writable'],
+		),
+
+		Glib::ParamSpec->object(
+			'document',
+			"Document",
+			"The main document being displayed",
+			'Xacobeo::Document',
+			['readable', 'writable'],
+		),
+
+		# FIXME this property is redundant as we can use $self->document->namespaces
+		Glib::ParamSpec->scalar(
+			'namespaces',
+			"Namespaces",
+			"The namespaces in the main document",
+			['readable', 'writable'],
+		),
+	],
+
 	signals => {
 		'node-selected' => {
 			flags       => ['run-last'],
@@ -54,11 +118,11 @@ use Glib::Object::Subclass 'Gtk2::TreeView' =>
 			param_types => ['Glib::Scalar'],
 		},
 	},
-;
+);
 
 
 my $NODE_POS = 0;
-my $NODE_PATH     = $NODE_POS++;
+my $NODE_DATA     = $NODE_POS++;
 my $NODE_ICON     = $NODE_POS++;
 my $NODE_NAME     = $NODE_POS++;
 my $NODE_ID_NAME  = $NODE_POS++;
@@ -69,15 +133,16 @@ sub INIT_INSTANCE {
 	my $self = shift;
 
 	my $model = Gtk2::TreeStore->new(
-		'Glib::String', # Unique path to the node
+		'Glib::Scalar', # A reference to the XML::LibXML::Node
 		'Glib::String', # The icon to use (ex: 'gtk-directory')
 		'Glib::String', # The name of the Element
 		'Glib::String', # The name of the ID field
 		'Glib::String', # The value of the ID field
 	);
 	$self->set_model($model);
+	$self->set_fixed_height_mode(TRUE);
 
-	my $column = $self->_add_text_column($NODE_NAME, __('Element'));
+	my $column = $self->_add_text_column($NODE_NAME, __('Element'), 150);
 
 	# Icon
 	my $node_icon = Gtk2::CellRendererPixbuf->new();
@@ -85,28 +150,146 @@ sub INIT_INSTANCE {
 	$column->set_attributes($node_icon, 'stock-id' => $NODE_ICON);
 
 	# Node attribute name (ID attribute)
-	$self->_add_text_column($NODE_ID_NAME, __('ID name'));
+	$self->_add_text_column($NODE_ID_NAME, __('ID name'), 75);
 
 	# Node attribute value (ID attribute)
-	$self->_add_text_column($NODE_ID_VALUE, __('ID value'));
+	$self->_add_text_column($NODE_ID_VALUE, __('ID value'), 75);
 	
 
+	my $ui_manager = $self->_build_ui_manager();
+	$self->ui_manager($ui_manager);
+
+	my $menu = $ui_manager->get_widget('/DomViewPopup');
+	$self->menu($menu);
+
 	$self->signal_connect('row-activated' => \&callback_row_activated);
+	$self->signal_connect('popup-menu' => \&callback_popup_menu);
+	$self->signal_connect('button-press-event' => \&callback_button_press_event);
+}
+
+
+sub _build_ui_manager {
+	my $self = shift;
+
+	my $entries = [
+		# Entries (name, stock id, label, accelerator, tooltip, callback)
+		[
+			'DomViewSelectNode',
+			'gtk-jump-to',
+			__("_Jump to"),
+			undef,
+			__("Show the node"),
+			sub { $self->do_select_node() }
+		],
+		[
+			'DomViewCopyXPath',
+			'gtk-copy',
+			__("_Copy XPath"),
+			undef,
+			__("Copy the node's XPath"),
+			sub { $self->do_copy_xpath() }
+		],
+	];
+
+	my $actions = Gtk2::ActionGroup->new("DomViewActions");
+	$self->action_group($actions);
+	$actions->add_actions($entries, undef);
+	$actions->set_sensitive(FALSE);
+
+	my $ui_manager = Gtk2::UIManager->new();
+	$self->ui_manager($ui_manager);
+
+	my $ui_string = <<'__XML__';
+<ui>
+	<popup name="DomViewPopup">
+		<menuitem action='DomViewSelectNode'/>
+		<placeholder name="DomViewPlaceholder_1"/>
+		<separator/>
+		<menuitem action='DomViewCopyXPath'/>
+		<placeholder name="DomViewPlaceholder_2"/>
+	</popup>
+</ui>
+__XML__
+	$ui_manager->add_ui_from_string($ui_string);
+
+	$ui_manager->insert_action_group($actions, 0);
+	return $ui_manager;
 }
 
 
 #
-# Transform the signal 'row-activated' into 'node-selected'
+# Transform the signal 'row-activated' into 'node-selected'.
 #
 sub callback_row_activated {
 	my ($self, $path) = @_;
 
 	my $model = $self->get_model;
 	my $iter = $model->get_iter($path);
-	my $xpath = $model->get($iter, $NODE_PATH);
-
-	my $node = $self->document->find($xpath)->[0];
+	my $node = $model->get($iter, $NODE_DATA);
 	$self->signal_emit('node-selected' => $node);
+}
+
+
+sub do_copy_xpath {
+	my $self = shift;
+
+	my $node = $self->get_selected_node or return;
+	my $xpath = Xacobeo::XS->get_node_path($node, $self->namespaces);
+
+	foreach my $selection qw(SELECTION_CLIPBOARD SELECTION_PRIMARY) {
+		my $clipboard = Gtk2::Clipboard->get(Gtk2::Gdk->$selection);
+		$clipboard->set_text($xpath);
+	}
+}
+
+
+sub do_select_node {
+	my $self = shift;
+
+	my $node = $self->get_selected_node or return;
+	$self->signal_emit('node-selected' => $node);
+}
+
+
+sub get_selected_node {
+	my $self = shift;
+	# Get the selected node and find its xpath
+	my $selection = $self->get_selection;
+	my ($model, $iter) = $selection->get_selected or return;
+	my $node = $model->get($iter, $NODE_DATA);
+	return $node;
+}
+
+
+#
+# Display a context menu for a given node when right clicking.
+#
+sub callback_button_press_event {
+	my ($self, $event) = @_;
+
+	return FALSE unless $event->button == 3;
+
+	my $path = $self->get_path_at_pos($event->x, $event->y) or return FALSE;
+
+	my $selection = $self->get_selection;
+	$selection->unselect_all();
+	$selection->select_path($path);
+
+	$self->action_group->set_sensitive(TRUE);
+
+	$self->menu->popup(undef, undef, undef, undef, $event->button, $event->time);
+
+	return TRUE;
+}
+
+
+#
+# Display a context menu for a given node when right clicking.
+#
+sub callback_popup_menu {
+	my ($self) = @_;
+	$self->menu->popup(undef, undef, undef, undef, 0, 0);
+	return TRUE;
 }
 
 
@@ -119,6 +302,7 @@ sub set_document {
 		$self->document ? $self->document->namespaces : undef
 	);
 }
+
 
 =head2 load_node
 
@@ -166,7 +350,7 @@ sub load_node {
 #
 sub _add_text_column {
 	my $self = shift;
-	my ($field, $title) = @_;
+	my ($field, $title, $width) = @_;
 
 	my $cell = Gtk2::CellRendererText->new();
 	my $column = Gtk2::TreeViewColumn->new();
@@ -174,7 +358,8 @@ sub _add_text_column {
 
 	$column->set_title($title);
 	$column->set_resizable(TRUE);
-	$column->set_sizing('autosize');
+	$column->set_sizing('fixed');
+	$column->set_fixed_width($width);
 	$column->set_attributes($cell, text => $field);
 
 	$self->append_column($column);

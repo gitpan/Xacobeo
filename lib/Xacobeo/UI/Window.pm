@@ -18,6 +18,50 @@ Xacobeo::UI::Window - Main window of Xacobeo.
 
 The application's main window. This widget is a L<Gtk2::Window>.
 
+=head1 PROPERTIES
+
+The following properties are defined:
+
+=head2 source-view
+
+The source view where the document's content is displayed.
+
+=head2 dom-view
+
+The widget displaying the results of a search
+
+=head2 results-view
+
+The UI Manager used by this widget.
+
+=head2 namespaces-view
+
+The widget displaying the namespaces of the current document.
+
+=head2 xpath-entry
+
+The entry where the XPath expresion will be edited.
+
+=head2 statusbar
+
+The window's statusbar.
+
+=head2 notebook
+
+The notbook widget at the bottom of the window.
+
+=head2 evaluate-button
+
+The button starting a search.
+
+=head2 conf
+
+A reference to the main configuration singleton.
+
+=head2 ui-manager
+
+The UI Manager used by this widget.
+
 =head1 METHODS
 
 The following methods are available:
@@ -43,9 +87,10 @@ use Xacobeo::UI::SourceView;
 use Xacobeo::UI::DomView;
 use Xacobeo::UI::Statusbar;
 use Xacobeo::UI::XPathEntry;
+use Xacobeo::Document;
+use Xacobeo::GObject;
 use Xacobeo::I18n;
 use Xacobeo::Timer;
-use Xacobeo::Document;
 use Xacobeo::Error;
 use Xacobeo::Utils qw{
 	isa_dom_nodelist
@@ -53,45 +98,116 @@ use Xacobeo::Utils qw{
 	scrollify
 };
 
-use Xacobeo::Accessors qw{
-	source_view
-	dom_view
-	results_view
-	namespaces_view
-	notebook
-	statusbar
-	xpath_entry
-	evaluate_button
-	ui_manager
-	conf
-};
 
-use Glib::Object::Subclass 'Gtk2::Window';
+Xacobeo::GObject->register_package('Gtk2::Window' =>
+	properties => [
+		Glib::ParamSpec->object(
+			'source-view',
+			"Source View",
+			"The source view where the document content is displayed",
+			'Xacobeo::UI::SourceView',
+			['readable', 'writable'],
+		),
+
+		Glib::ParamSpec->object(
+			'dom-view',
+			"DOM View",
+			"The DOM tree view where the document nodes are displayed",
+			'Xacobeo::UI::DomView',
+			['readable', 'writable'],
+		),
+
+		Glib::ParamSpec->object(
+			'results-view',
+			"Results View",
+			"The widget displaying the results of a search",
+			'Xacobeo::UI::SourceView',
+			['readable', 'writable'],
+		),
+
+		Glib::ParamSpec->scalar(
+			'namespaces-view',
+			"Namespaces View",
+			"The widget displaying the namespaces of the current document",
+			['readable', 'writable'],
+		),
+
+		Glib::ParamSpec->object(
+			'xpath-entry',
+			"XPath Entry",
+			"The entry where the XPath expresion will be edited",
+			'Xacobeo::UI::XPathEntry',
+			['readable', 'writable'],
+		),
+
+		Glib::ParamSpec->object(
+			'statusbar',
+			"Statusbar",
+			"The window's statusbar",
+			'Xacobeo::UI::Statusbar',
+			['readable', 'writable'],
+		),
+
+		Glib::ParamSpec->object(
+			'ui-manager',
+			"UI Manager",
+			"The UI Manager that provides the UI",
+			'Gtk2::UIManager',
+			['readable', 'writable'],
+		),
+
+		Glib::ParamSpec->object(
+			'notebook',
+			"Notebook",
+			"The notbook widget at the bottom of the window",
+			'Gtk2::Notebook',
+			['readable', 'writable'],
+		),
+
+		Glib::ParamSpec->object(
+			'evaluate-button',
+			"Evaluate Button",
+			"The button starting a search",
+			'Gtk2::Button',
+			['readable', 'writable'],
+		),
+
+		Glib::ParamSpec->object(
+			'conf',
+			"Configuration",
+			"A reference to the main configuration singleton",
+			'Xacobeo::Conf',
+			['readable', 'writable', 'construct-only'],
+		),
+	],
+);
 
 
-sub INIT_INSTANCE {
-	my $self = shift;
+sub new {
+	my $class = shift;
 
 	my $conf = Xacobeo::Conf->get_conf;
-	$self->conf($conf);
+	my $self = $class->SUPER::new(conf => $conf);
 
-	# Pimp a bit the window (title, icon
+	# Pimp a bit the window (title, icon, size)
 	$self->set_title(__("No document"));
-
 	$self->set_icon(
 		Gtk2::Gdk::Pixbuf->new_from_file(
 			$conf->share_file('pixmaps', 'xacobeo.png')
 		)
 	);
-
 	$self->set_size_request(800, 600);
+
+	my $ui_manager = $self->_create_ui_manager();
+	$self->ui_manager($ui_manager);
 
 
 	# Build the window's widgets
 	my $vbox = Gtk2::VBox->new(FALSE, 0);
 	$self->add($vbox);
 
-	$vbox->pack_start($self->_create_menu, FALSE, FALSE, 0);
+	my $menu = $self->ui_manager->get_widget('/MenuBar');
+	$vbox->pack_start($menu, FALSE, FALSE, 0);
 	$vbox->pack_start($self->_create_search_bar, FALSE, TRUE, 0);
 	$vbox->pack_start($self->_create_main_content, TRUE, TRUE, 0);
 
@@ -101,12 +217,14 @@ sub INIT_INSTANCE {
 
 
 	# Connect the signals
-	$self->_signal_connect(dom_view => 'node-selected');
-	$self->_signal_connect(xpath_entry => 'xpath-changed');
+	$self->auto_connect(dom_view => 'node-selected');
+	$self->auto_connect(xpath_entry => 'xpath-changed');
 
-	$self->_signal_connect(xpath_entry => 'activate', \&callback_execute_xpath);
-	$self->_signal_connect(evaluate_button => 'activate', \&callback_execute_xpath);
-	$self->_signal_connect(evaluate_button => 'clicked', \&callback_execute_xpath);
+	$self->auto_connect(xpath_entry => 'activate', \&callback_execute_xpath);
+	$self->auto_connect(evaluate_button => 'activate', \&callback_execute_xpath);
+	$self->auto_connect(evaluate_button => 'clicked', \&callback_execute_xpath);
+
+	return $self;
 }
 
 
@@ -119,7 +237,7 @@ sub INIT_INSTANCE {
 #   $callback: the callback to connect, if no callback is provided then
 #              "callback_$signal" will be used instead (Optional).
 #
-sub _signal_connect {
+sub auto_connect {
 	my $self = shift;
 	my ($object, $signal, $callback) = @_;
 
@@ -440,7 +558,7 @@ sub do_show_about_dialog {
 }
 
 
-sub _create_menu {
+sub _create_ui_manager {
 	my $self = shift;
 
 	# This entries are always active
@@ -479,18 +597,42 @@ sub _create_menu {
 		],
 	];
 
+
+	my $ui_manager = Gtk2::UIManager->new();
+	my $ui_string = <<'__XML__';
+<ui>
+	<menubar name='MenuBar'>
+
+		<menu action='FileMenu'>
+			<menuitem action='FileOpen'/>
+			<placeholder name="FilePlaceholder_1"/>
+
+			<separator/>
+
+			<placeholder name="FilePlaceholder_2"/>
+			<menuitem action='FileQuit'/>
+		</menu>
+
+
+		<placeholder name="ExtraMenu"/>
+
+
+		<menu action='HelpMenu'>
+			<menuitem action='HelpAbout'/>
+		</menu>
+
+	</menubar>
+</ui>
+__XML__
+	$ui_manager->add_ui_from_string($ui_string);
+
 	my $actions = Gtk2::ActionGroup->new("Actions");
 	$actions->add_actions($active_entries, undef);
 
-	my $ui = Gtk2::UIManager->new();
-	$self->ui_manager($ui);
-	$ui->insert_action_group($actions, 0);
+	$ui_manager->insert_action_group($actions, 0);
+	$self->add_accel_group($ui_manager->get_accel_group);
 
-	my $file = $self->conf->share_file('xacobeo', 'xacobeo-ui.xml');
-	$ui->add_ui_from_file($file);
-	$self->add_accel_group($ui->get_accel_group);
-
-	return $ui->get_widget('/MenuBar');
+	return $ui_manager;
 }
 
 

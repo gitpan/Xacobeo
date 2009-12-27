@@ -31,6 +31,19 @@ L<Gtk2::Ex::Entry::Pango>.
 The widget validates the text in realtime. In order to support validation for
 namespaces a document has to be set first.
 
+=head1 PROPERTIES
+
+The following properties are defined:
+
+=head2 document
+
+The document being displayed.
+
+=head2 valid
+
+Indicates if the XPath expression beind displayed is valid based on the current
+document.
+
 =head1 METHODS
 
 The following methods are available:
@@ -50,9 +63,28 @@ use Glib qw(TRUE FALSE);
 use Gtk2;
 use Gtk2::Ex::Entry::Pango;
 
-use Xacobeo::Accessors qw(document valid);
+use Xacobeo::GObject;
 
-use Glib::Object::Subclass 'Gtk2::Ex::Entry::Pango' =>
+Xacobeo::GObject->register_package('Gtk2::Ex::Entry::Pango' =>
+	properties => [
+		Glib::ParamSpec->object(
+			'document',
+			"Document",
+			"The main document being displayed",
+			'Xacobeo::Document',
+			['readable', 'writable'],
+		),
+
+		Glib::ParamSpec->boolean(
+			'valid',
+			"Valid XPath",
+			"Indicates if the XPath expression is valid",
+			FALSE,
+			['readable', 'writable'],
+		),
+	],
+
+	# FIXME perhaps this signal should be removed and the caller shoud connect to notify::is-valid
 	signals => {
 		'xpath-changed' => {
 			flags       => ['run-last'],
@@ -60,14 +92,13 @@ use Glib::Object::Subclass 'Gtk2::Ex::Entry::Pango' =>
 			param_types => ['Glib::String',    'Glib::Boolean'],
 		},
 	},
-;
+);
 
 
 sub INIT_INSTANCE {
 	my $self = shift;
 
 	$self->signal_connect('changed' => \&callback_changed);
-	$self->valid(FALSE);
 	$self->set_sensitive(FALSE);
 }
 
@@ -94,6 +125,7 @@ sub set_document {
 	my ($document) = @_;
 	$self->document($document);
 	$self->set_sensitive($document ? TRUE : FALSE);
+	# FIXME changing the document has to trigger a revalidation of the xpath expression
 }
 
 

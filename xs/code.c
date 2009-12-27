@@ -1,6 +1,6 @@
 //
 // Sample program that displays an XML file in a GtkTextView.
-// 
+//
 // Copyright (C) 2008 Emmanuel Rodriguez
 //
 // This program is free software; you can redistribute it and/or modify it under
@@ -27,11 +27,15 @@ do { \
 	g_free(content); \
 } while (FALSE)
 
+#define ELEMENT_MATCH(a, b) (a)->type == XML_ELEMENT_NODE \
+	&& xmlStrEqual((a)->name, (b)->name) \
+	&& (a)->ns == (b)->ns
+
 // The icon type to use for an element
 #define ICON_ELEMENT "gtk-directory"
 
 
-// The markup styles to be used 
+// The markup styles to be used
 typedef struct _MarkupTags {
 	GtkTextTag *result_count;
 	GtkTextTag *boolean;
@@ -79,7 +83,7 @@ typedef struct _TextRenderCtx {
 
 	// The tags to apply (collected at runtime as the XML document gets built).
 	GArray        *tags;
-	
+
 	// Statistics used for debugging purposes
 	gsize  calls;
 } TextRenderCtx;
@@ -92,7 +96,7 @@ typedef struct _ApplyTag {
 	GtkTextTag *tag;
 	gsize      start;
 	gsize      end;
-	gchar      *path;
+	gchar      *name;
 } ApplyTag;
 
 
@@ -106,7 +110,7 @@ typedef struct _TreeRenderCtx {
 
 	// Perl hash with the namespaces to use (key: uri, value: prefix)
 	HV *namespaces;
-	
+
 	// ProxyNode used by XML::LibXML
 	ProxyNode *proxy;
 
@@ -128,7 +132,6 @@ static const gchar* my_get_uri_prefix          (const xmlChar *uri, HV *namespac
 static void         my_render_buffer           (TextRenderCtx *xargs);
 static void         my_add_text_and_entity     (TextRenderCtx *xargs, GString *buffer, GtkTextTag *markup, const gchar *entity);
 static void         my_populate_tree_store     (TreeRenderCtx *xargs, xmlNode *node, GtkTreeIter *parent, gint pos);
-static gchar*       my_get_node_path           (xmlNode *node);
 
 static void         my_XML_DOCUMENT_NODE       (TextRenderCtx *xargs, xmlNode *node);
 static void         my_XML_HTML_DOCUMENT_NODE  (TextRenderCtx *xargs, xmlNode *node);
@@ -155,17 +158,17 @@ static void         my_XML_NAMESPACE_DECL      (TextRenderCtx *xargs, xmlNs *ns)
 // through the DTD) then the ID will be displayed.
 //
 void xacobeo_populate_gtk_tree_store (GtkTreeStore *store, xmlNode *node, HV *namespaces) {
-	
+
 	////
 	// Parameters validation
-	
+
 	// Initialize the tree store
 	if (store == NULL) {
 		WARN("GtkTreeStore is NULL");
 		return;
 	}
 	gtk_tree_store_clear(store);
-	
+
 
 	// Get the root element
 	if (node == NULL) {
@@ -178,8 +181,8 @@ void xacobeo_populate_gtk_tree_store (GtkTreeStore *store, xmlNode *node, HV *na
 		return;
 	}
 	DEBUG("Adding root element %s", root->name);
-	
-	
+
+
 	// The argument contenxt
 	TreeRenderCtx xargs = {
 		.store      = store,
@@ -187,7 +190,7 @@ void xacobeo_populate_gtk_tree_store (GtkTreeStore *store, xmlNode *node, HV *na
 		.calls      = 0,
 		.proxy      = PmmOWNERPO(PmmPROXYNODE(node)),
 	};
-	
+
 
 	// Populate the DOM tree (timed)
 	DEBUG("Populating DOM tree");
@@ -214,8 +217,13 @@ static void my_populate_tree_store (TreeRenderCtx *xargs, xmlNode *node, GtkTree
 
 
 	gchar *node_name = my_get_node_name_prefixed(node, xargs->namespaces);
-	gchar *node_path = (node->type == XML_ELEMENT_NODE ? my_get_node_path(node) : NULL);
-	
+	SV *sv = NULL;
+	if (xargs->namespaces) {
+		// This part is optional because the C main wrapper used for testing can't
+		// deal with the creation of an SV.
+		sv = PmmNodeToSv(node, xargs->proxy);
+	}
+
 	// Find out if the node has an attribute that's an ID
 	gboolean done = FALSE;
 	GtkTreeIter iter;
@@ -223,7 +231,7 @@ static void my_populate_tree_store (TreeRenderCtx *xargs, xmlNode *node, GtkTree
 		if (xmlIsID(node->doc, node, attr)) {
 
 			done = TRUE;
-	
+
 			gchar *id_name = my_get_node_name_prefixed((xmlNode *) attr, xargs->namespaces);
 			// If we pass 'attr' then the output will be "id='23'" instead of "23"
 			gchar *id_value = my_to_string((xmlNode *) attr->children);
@@ -232,38 +240,37 @@ static void my_populate_tree_store (TreeRenderCtx *xargs, xmlNode *node, GtkTree
 			// Add the current node
 			gtk_tree_store_insert_with_values(
 				xargs->store, &iter, parent, pos,
-	
+
 				DOM_COL_ICON,         ICON_ELEMENT,
-				DOM_COL_XML_PATH,     node_path,
+				DOM_COL_XML_POINTER,  sv,
 				DOM_COL_ELEMENT_NAME, node_name,
-				
+
 				// Add the columns ID_NAME and ID_VALUE
 				DOM_COL_ID_NAME,      id_name,
 				DOM_COL_ID_VALUE,     id_value,
-				
+
 				-1
 			);
-			
+
 			g_free(id_name);
 			g_free(id_value);
 			break;
 		}
 	}
-	
+
 	// Add the current node if it wasn't already added
 	if (! done) {
 		gtk_tree_store_insert_with_values(
 			xargs->store, &iter, parent, pos,
-		
+
 			DOM_COL_ICON,         ICON_ELEMENT,
-			DOM_COL_XML_PATH,     node_path,
+			DOM_COL_XML_POINTER,  sv,
 			DOM_COL_ELEMENT_NAME, node_name,
-		
+
 			-1
 		);
 	}
 	g_free(node_name);
-	g_free(node_path);
 
 
 	// Do the children
@@ -316,7 +323,7 @@ void xacobeo_populate_gtk_text_buffer (GtkTextBuffer *buffer, xmlNode *node, HV 
 		WARN("GtkTextBuffer is NULL");
 		return;
 	}
-	
+
 	TextRenderCtx xargs = {
 		.buffer = buffer,
 		.markup = my_get_buffer_tags(buffer),
@@ -332,8 +339,8 @@ void xacobeo_populate_gtk_text_buffer (GtkTextBuffer *buffer, xmlNode *node, HV 
 	GtkTextIter iter;
 	gtk_text_buffer_get_end_iter(buffer, &iter);
 	xargs.buffer_pos = gtk_text_iter_get_offset(&iter);
-	
-	
+
+
 	DEBUG("Displaying document with syntax highlighting");
 	GTimeVal start;
 	g_get_current_time(&start);
@@ -348,7 +355,7 @@ void xacobeo_populate_gtk_text_buffer (GtkTextBuffer *buffer, xmlNode *node, HV 
 	DEBUG("Applying syntax highlighting");
 	my_render_buffer(&xargs);
 
-	
+
 	GTimeVal end;
 	g_get_current_time(&end);
 
@@ -391,19 +398,19 @@ static void my_render_buffer (TextRenderCtx *xargs) {
 		GtkTextIter iter_start;
 		gtk_text_buffer_get_iter_at_offset(xargs->buffer, &iter_start, to_apply->start);
 		gtk_text_buffer_get_iter_at_offset(xargs->buffer, &iter_end, to_apply->end);
-		
-		if (to_apply->path) {
+
+		if (to_apply->name) {
 			gchar *name;
 
-			name = g_strjoin("|", to_apply->path, "start", NULL);
+			name = g_strjoin("|", to_apply->name, "start", NULL);
 			gtk_text_buffer_create_mark(xargs->buffer, name, &iter_start, TRUE);
 			g_free(name);
 
-			name = g_strjoin("|", to_apply->path, "end", NULL);
+			name = g_strjoin("|", to_apply->name, "end", NULL);
 			gtk_text_buffer_create_mark(xargs->buffer, name, &iter_end, FALSE);
 			g_free(name);
 
-			g_free(to_apply->path);
+			g_free(to_apply->name);
 		}
 
 		// This is the bottleneck of the function. On the #gedit IRC channel it was
@@ -421,11 +428,11 @@ static void my_render_buffer (TextRenderCtx *xargs) {
 // displayed in a GtkTextBuffer and rendered with a corresponding markup rule.
 //
 static void my_display_document_syntax (TextRenderCtx *xargs, xmlNode *node) {
-	
+
 	if (node == NULL) {
 		buffer_add(xargs, xargs->markup->error, "\n");
 	}
-	
+
 	switch (node->type) {
 
 		case XML_DOCUMENT_NODE:
@@ -439,7 +446,7 @@ static void my_display_document_syntax (TextRenderCtx *xargs, xmlNode *node) {
 		case XML_ELEMENT_NODE:
 			my_XML_ELEMENT_NODE(xargs, node);
 		break;
-		
+
 		case XML_ATTRIBUTE_NODE:
 			my_XML_ATTRIBUTE_NODE(xargs, node);
 		break;
@@ -447,19 +454,19 @@ static void my_display_document_syntax (TextRenderCtx *xargs, xmlNode *node) {
 		case XML_TEXT_NODE:
 			my_XML_TEXT_NODE(xargs, node);
 		break;
-		
+
 		case XML_COMMENT_NODE:
 			my_XML_COMMENT_NODE(xargs, node);
 		break;
-		
+
 		case XML_CDATA_SECTION_NODE:
 			my_XML_CDATA_SECTION_NODE(xargs, node);
 		break;
-		
+
 		case XML_PI_NODE:
 			my_XML_PI_NODE(xargs, node);
 		break;
-		
+
 		case XML_ENTITY_REF_NODE:
 			my_XML_ENTITY_REF_NODE(xargs, node);
 		break;
@@ -467,7 +474,7 @@ static void my_display_document_syntax (TextRenderCtx *xargs, xmlNode *node) {
 		case XML_DTD_NODE:
 			my_XML_DTD_NODE(xargs, node);
 		break;
-		
+
 		default:
 			WARN("Unknown XML type %d for %s", node->type, node->name);
 		break;
@@ -482,12 +489,12 @@ static void my_XML_DOCUMENT_NODE (TextRenderCtx *xargs, xmlNode *node) {
 	// Create the XML declaration <?xml version="" encoding=""?>
 	xmlDoc *doc = (xmlDoc *) node;
 	GString *gstring = g_string_sized_new(30);
-	g_string_printf(gstring, "version=\"%s\" encoding=\"%s\"", 
+	g_string_printf(gstring, "version=\"%s\" encoding=\"%s\"",
 		doc->version,
 		doc->encoding ? (gchar *) doc->encoding : "UTF-8"
 	);
 	gchar *piBuffer = g_string_free(gstring, FALSE);
-	
+
 	xmlNode *pi = xmlNewPI(BAD_CAST "xml", BAD_CAST piBuffer);
 	g_free(piBuffer);
 	my_display_document_syntax(xargs, pi);
@@ -542,13 +549,13 @@ static void my_XML_ELEMENT_NODE (TextRenderCtx *xargs, xmlNode *node) {
 		my_XML_ATTRIBUTE_NODE(xargs, (xmlNode *) attr);
 	}
 
-	
+
 	// An element can be closed with <element></element> or <element/>
 	if (node->children) {
 
 		// Close the start of the element
 		buffer_add(xargs, xargs->markup->syntax, ">");
-		
+
 		// Do the children
 		for (xmlNode *child = node->children; child; child = child->next) {
 			my_display_document_syntax(xargs, child);
@@ -565,7 +572,7 @@ static void my_XML_ELEMENT_NODE (TextRenderCtx *xargs, xmlNode *node) {
 		//      should be written as: <no-content></no-content>
 		buffer_add(xargs, xargs->markup->syntax, "/>");
 	}
-	
+
 	g_free(name);
 }
 
@@ -573,7 +580,7 @@ static void my_XML_ELEMENT_NODE (TextRenderCtx *xargs, xmlNode *node) {
 
 // Displays a Nanespace declaration ex: <... xmlns:x="http://www.w3.org/1999/xhtml" ...>
 static void my_XML_NAMESPACE_DECL (TextRenderCtx *xargs, xmlNs *ns) {
-	
+
 	const gchar *prefix = my_get_uri_prefix(ns->href, xargs->namespaces);
 	gchar *name = NULL;
 	if (prefix) {
@@ -649,13 +656,13 @@ static void my_XML_TEXT_NODE (TextRenderCtx *xargs, xmlNode *node) {
 	// The type of text node rendering to do (Attribute, Element, etc)
 	gboolean do_quotes = FALSE;
 	GtkTextTag *markup = NULL; // NULL -> no style
-	
+
 	if (node->parent) {
 		switch (node->parent->type) {
 			case XML_ELEMENT_NODE:
 				// Use the default values - Nothing more to do
 			break;
-		
+
 			case XML_ATTRIBUTE_NODE:
 			case XML_ATTRIBUTE_DECL:
 				markup = xargs->markup->attribute_value;
@@ -667,7 +674,7 @@ static void my_XML_TEXT_NODE (TextRenderCtx *xargs, xmlNode *node) {
 			break;
 		}
 	}
-	
+
 
 	const gchar *p = (gchar *) node->content;
 	size_t length = strlen(p);
@@ -697,9 +704,9 @@ static void my_XML_TEXT_NODE (TextRenderCtx *xargs, xmlNode *node) {
 			break;
 
 			default: {
-			
+
 				gboolean append = TRUE;
-			
+
 				if (do_quotes) {
 					append = FALSE;
 
@@ -711,14 +718,14 @@ static void my_XML_TEXT_NODE (TextRenderCtx *xargs, xmlNode *node) {
 						case '"':
 							my_add_text_and_entity(xargs, buffer, markup, "quot");
 						break;
-						
+
 						default:
 							// Append the UTF-8 character as it is to the buffer
 							append = TRUE;
 						break;
 					}
 				}
-			
+
 				// Keep the UTF-8 character unchanged
 				if (append) {
 					g_string_append_len(buffer, p, next - p);
@@ -729,7 +736,7 @@ static void my_XML_TEXT_NODE (TextRenderCtx *xargs, xmlNode *node) {
 
 		p = next;
 	}
-	
+
 	// Write the last bytes in the buffer
 	buffer_add(xargs, markup, buffer->str);
 	g_string_free(buffer, TRUE);
@@ -756,7 +763,7 @@ static void my_XML_COMMENT_NODE (TextRenderCtx *xargs, xmlNode *node) {
 
 
 
-// Displays a CDATA section ex: <![CDATA[<greeting>Hello, world!</greeting>]]> 
+// Displays a CDATA section ex: <![CDATA[<greeting>Hello, world!</greeting>]]>
 static void my_XML_CDATA_SECTION_NODE (TextRenderCtx *xargs, xmlNode *node) {
 	buffer_add(xargs, xargs->markup->cdata, "<![CDATA[");
 	buffer_add(xargs, xargs->markup->cdata_content, (gchar *) node->content);
@@ -769,13 +776,13 @@ static void my_XML_CDATA_SECTION_NODE (TextRenderCtx *xargs, xmlNode *node) {
 static void my_XML_PI_NODE (TextRenderCtx *xargs, xmlNode *node) {
 	buffer_add(xargs, xargs->markup->syntax, "<?");
 	buffer_add(xargs, xargs->markup->pi, (gchar *) node->name);
-	
+
 	// Add the data if there's something
 	if (node->content) {
 		buffer_add(xargs, xargs->markup->syntax, " ");
 		buffer_add(xargs, xargs->markup->pi_data,(gchar *) node->content);
 	}
-	
+
 	buffer_add(xargs, xargs->markup->syntax, "?>");
 }
 
@@ -847,6 +854,11 @@ static gchar* my_get_node_name_prefixed (xmlNode *node, HV *namespaces) {
 //
 static const gchar* my_get_uri_prefix (const xmlChar *uri, HV *namespaces) {
 
+	// Reset of the namespace to the default namespace
+	if (xmlStrEqual(uri, BAD_CAST "")) {
+		return NULL;
+	}
+
 	// Get the prefix corresponding to the namespace
 	SV **svPtr = hv_fetch(namespaces, (gchar *) uri, xmlStrlen(uri), FALSE);
 	if (!svPtr) {
@@ -854,7 +866,7 @@ static const gchar* my_get_uri_prefix (const xmlChar *uri, HV *namespaces) {
 		WARN("Can't find namespace for URI %s", uri);
 		return NULL;
 	}
-	
+
 	if (SvTYPE(*svPtr) != SVt_PV) {
 		// Prefix isn't a string, something else was stored in the hash
 		WARN("No valid namespace associated with URI %s, got: '%s'", uri, SvPV_nolen(*svPtr));
@@ -883,7 +895,7 @@ static gchar* my_to_string (xmlNode *node) {
 	int format = 0;
 	xmlNodeDump(buffer, node->doc, node, level, format);
 	xmlIndentTreeOutput = old_indent;
-	
+
 	// Transform the string to a glib string
 	const gchar *content = (const gchar *) xmlBufferContent(buffer);
 	gchar *string = g_strdup(content);
@@ -913,12 +925,12 @@ static void my_buffer_add (TextRenderCtx *xargs, GtkTextTag *tag, xmlNode *node,
 
 	++xargs->calls;
 	g_string_append(xargs->xml_data, content);
-	
+
 	// We don't want the length of the string but the number of characters.
 	// UTF-8 may encode one character as multiple bytes.
 	glong end = xargs->buffer_pos + g_utf8_strlen(content, -1);
 
-	gchar *path = node ? my_get_node_path(node) : NULL;
+	gchar *name = node ? xacobeo_get_node_mark(node) : NULL;
 
 	// Apply the markup if there's a tag
 	if (tag) {
@@ -926,7 +938,7 @@ static void my_buffer_add (TextRenderCtx *xargs, GtkTextTag *tag, xmlNode *node,
 			.tag   = tag,
 			.start = xargs->buffer_pos,
 			.end   = end,
-			.path  = path,
+			.name  = name,
 		};
 		g_array_append_val(xargs->tags, to_apply);
 	}
@@ -944,7 +956,7 @@ static void my_buffer_add (TextRenderCtx *xargs, GtkTextTag *tag, xmlNode *node,
 static MarkupTags* my_get_buffer_tags (GtkTextBuffer *buffer) {
 	MarkupTags *markup = g_new0(MarkupTags, 1);
 	GtkTextTagTable *table = gtk_text_buffer_get_tag_table(buffer);
-	
+
 	markup->result_count = gtk_text_tag_table_lookup(table, "result_count");
 	markup->boolean      = gtk_text_tag_table_lookup(table, "boolean");
 	markup->number       = gtk_text_tag_table_lookup(table, "number");
@@ -961,7 +973,7 @@ static MarkupTags* my_get_buffer_tags (GtkTextBuffer *buffer) {
 	markup->syntax        = gtk_text_tag_table_lookup(table, "syntax");
 	markup->cdata         = gtk_text_tag_table_lookup(table, "cdata");
 	markup->cdata_content = gtk_text_tag_table_lookup(table, "cdata_content");
-	
+
 	markup->entity_ref = gtk_text_tag_table_lookup(table, "entity_ref");
 
 	markup->namespace_name = gtk_text_tag_table_lookup(table, "namespace_name");
@@ -978,9 +990,94 @@ static MarkupTags* my_get_buffer_tags (GtkTextBuffer *buffer) {
 //
 // This function returns a string that has to be freed with g_free().
 //
-static gchar* my_get_node_path (xmlNode *node) {
-	xmlChar *node_path = node ? xmlGetNodePath(node) : NULL;
-	gchar *path = g_strdup(node_path);
-	xmlFree(node_path);
+gchar* xacobeo_get_node_path (xmlNode *origin, HV *namespaces) {
+
+	if (origin == NULL) {
+		return NULL;
+	}
+
+	// Reverse the path to the node (from top to bottom)
+	GSList *list = NULL;
+	for (xmlNode *iter = origin; iter; iter = iter->parent) {
+		list = g_slist_prepend(list, iter);
+	}
+
+	// Build the path to the node
+	GString *gstring = g_string_sized_new(32);
+	gboolean use_separator = FALSE;
+	for (GSList *iter = list; iter; iter = iter->next) {
+		xmlNode *node = (xmlNode *) iter->data;
+
+		switch (node->type) {
+			case XML_DOCUMENT_NODE:
+			case XML_HTML_DOCUMENT_NODE:
+				g_string_append_c(gstring, '/');
+			break;
+
+			case XML_ELEMENT_NODE:
+					if (use_separator) {
+						g_string_append_c(gstring, '/');
+					}
+					else {
+						use_separator = TRUE;
+					}
+					gchar *name = my_get_node_name_prefixed(node, namespaces);
+					g_string_append(gstring, name);
+					g_free(name);
+
+
+					// Check if the node has siblings with the same name and namespace. If
+					// yes then we must add an offset to the xpath expression.
+
+					// Look for previous sibling with the same name.
+					int similar = 0;
+					for (xmlNode *sibling = node->prev; sibling; sibling = sibling->prev) {
+						if (ELEMENT_MATCH(sibling, node)) {
+							++similar;
+						}
+					}
+
+					if (similar == 0) {
+						// No previous sibling, but maybe we are the first in the incoming
+						// list! Let's scan on the other direction
+						for (xmlNode *sibling = node->next; sibling; sibling = sibling->next) {
+							if (ELEMENT_MATCH(sibling, node)) {
+								similar = 1;
+								break;
+							}
+						}
+					}
+					else {
+						// XPath starts its indexex at 1 instead of 0
+						++similar;
+					}
+
+					if (similar) {
+						// The node name is not unique we must add an index
+						g_string_append_printf(gstring, "[%d]", similar);
+					}
+
+			break;
+
+			default:
+				WARN("Unknown XML type %d for %s", node->type, node->name);
+			break;
+		}
+	}
+
+	g_slist_free(list);
+	gchar *path = g_strdup(gstring->str);
+	g_string_free(gstring, TRUE);
+
 	return path;
+}
+
+
+//
+// Returns a unique identifier for a give node.
+//
+// This function returns a string that has to be freed with g_free().
+//
+gchar* xacobeo_get_node_mark (xmlNode *node) {
+	return g_strdup_printf("%p", (void *)node);
 }
